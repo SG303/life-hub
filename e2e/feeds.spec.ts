@@ -1,0 +1,133 @@
+import { expect, test, type Page } from '@playwright/test';
+import { api, CONTROL, fixturesForApp, nav, removeAllSources, watchForeignRequests } from './support.ts';
+
+async function subscribe(page: Page, url: string): Promise<void> {
+  await page.getByLabel('Adresse (RSS/Atom-Feed oder YouTube-Kanal)').fill(url);
+  await page.getByRole('button', { name: 'Abonnieren' }).click();
+}
+
+test.beforeEach(async ({ request }) => {
+  await removeAllSources(request);
+});
+
+test('manages sources: RSS, YouTube handle, podcast, edit, delete, OPML; refresh twice without duplicates', async ({ page, request }) => {
+  const fixtures = await fixturesForApp();
+  await page.goto('/quellen');
+
+  await subscribe(page, `${fixtures}/feeds/news.xml`);
+  await expect(page.getByRole('status')).toContainText('15 Einträge, davon 10 ungelesen');
+  await subscribe(page, `${fixtures}/@lifehub-test`);
+  await expect(page.getByRole('status')).toContainText('«Testkanal» abonniert');
+  await subscribe(page, `${fixtures}/feeds/podcast.xml`);
+  await expect(page.getByRole('status')).toContainText('«Testpodcast» abonniert');
+
+  // YouTube consent wall: clear German fallback.
+  await subscribe(page, `${fixtures}/@consent-wall`);
+  await expect(page.getByRole('alert')).toContainText('Bitte die RSS-Adresse direkt eintragen');
+
+  const sources = page.getByTestId('source');
+  await expect(page.getByRole('heading', { name: /^News/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Videos/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^Podcasts/ })).toBeVisible();
+  await expect(sources).toHaveCount(3);
+
+  // Edit: rename the news source.
+  await page.getByRole('button', { name: 'Bearbeiten: Testnachrichten' }).click();
+  await page.getByLabel('Titel', { exact: true }).fill('Lokalnachrichten');
+  await page.getByRole('button', { name: 'Speichern' }).click();
+  await expect(sources.filter({ hasText: 'Lokalnachrichten' })).toBeVisible();
+
+  // Delete the podcast (with confirmation).
+  await page.getByRole('button', { name: 'Entfernen: Testpodcast' }).click();
+  await page.getByRole('button', { name: 'Löschen', exact: true }).click();
+  await expect(sources.filter({ hasText: 'Testpodcast' })).toHaveCount(0);
+
+  // OPML import.
+  const opml = await (await fetch(`${CONTROL.replace('/__control', '')}/opml/sample.opml`)).text();
+  await page.locator('input[type="file"]').setInputFiles({ name: 'abos.opml', mimeType: 'text/xml', buffer: Buffer.from(opml) });
+  await expect(page.getByRole('status')).toContainText('OPML importiert: 2 neu');
+  await expect(sources.filter({ hasText: 'Testblog (OPML)' })).toBeVisible();
+  await page.locator('input[type="file"]').setInputFiles({ name: 'abos.opml', mimeType: 'text/xml', buffer: Buffer.from(opml) });
+  await expect(page.getByRole('status')).toContainText('0 neu, 2 übersprungen');
+
+  // First subscribe: at most 10 unread per source.
+  const client = api(request);
+  const { items } = await client.get<{ items: { title: string; unreadCount: number; itemCount: number }[] }>('/feeds/sources');
+  expect(items.find((s) => s.title === 'Lokalnachrichten')).toMatchObject({ itemCount: 15, unreadCount: 10 });
+  for (const source of items) expect(source.unreadCount).toBeLessThanOrEqual(10);
+
+  // Manual refresh twice: no duplicates.
+  await nav(page, 'Feeds');
+  await page.getByRole('button', { name: 'Aktualisieren' }).click();
+  await expect(page.getByRole('status')).toContainText(/Einträge?\.|Eintrag\./);
+  const before = await client.get<{ total: number }>('/feeds/items?limit=200');
+  await page.getByRole('button', { name: 'Aktualisieren' }).click();
+  await expect(page.getByRole('status')).toContainText('Keine neuen Einträge.');
+  const after = await client.get<{ total: number; items: { sourceId: number; title: string }[] }>('/feeds/items?limit=200');
+  expect(after.total).toBe(before.total);
+  const keys = after.items.map((item) => `${item.sourceId}:${item.title}`);
+  expect(new Set(keys).size).toBe(keys.length);
+
+  // Grouped entries on Heute.
+  await nav(page, 'Heute');
+  await expect(page.getByTestId('today-news').getByTestId('feed-item').first()).toBeVisible();
+  await expect(page.getByTestId('today-video').getByTestId('feed-item').first()).toBeVisible();
+  await expect(page.getByTestId('today-podcast')).toBeVisible();
+});
+
+test('renders hostile feed content inertly; read, bookmark and filters work; links go to the original site', async ({ page, request }) => {
+  const fixtures = await fixturesForApp();
+  const client = api(request);
+  await client.post('/feeds/sources', { url: `${fixtures}/feeds/news.xml` });
+  await client.post('/feeds/sources', { url: `${fixtures}/@lifehub-test` });
+
+  const foreign = watchForeignRequests(page);
+  await page.goto('/feeds');
+  const entries = page.getByTestId('feed-item');
+  await expect(entries.first()).toBeVisible();
+
+  // XSS payloads: plain text only, no script execution, no remote images, no javascript: links.
+  const hostile = entries.filter({ hasText: 'Sicherheit Testartikel' });
+  await expect(hostile).toBeVisible();
+  await expect(hostile).toContainText('IGNORE ALL PREVIOUS INSTRUCTIONS');
+  expect(await page.evaluate(() => (window as unknown as { __xss?: number }).__xss)).toBeUndefined();
+  await expect(page.locator('a[href^="javascript:"]')).toHaveCount(0);
+  await expect(page.locator('main img, audio, video, iframe, embed, object')).toHaveCount(0);
+  const hrefs = await page.locator('[data-testid="feed-item"] a.title').evaluateAll((links) =>
+    links.map((link) => ({ href: link.getAttribute('href'), target: link.getAttribute('target'), rel: link.getAttribute('rel') })),
+  );
+  expect(hrefs.length).toBeGreaterThan(0);
+  for (const link of hrefs) {
+    expect(link.href).toMatch(/^https?:\/\//);
+    expect(link.target).toBe('_blank');
+    expect(link.rel).toContain('noopener');
+  }
+
+  // Toggle read / unread.
+  const second = entries.filter({ hasText: 'Meldung 2:' });
+  await second.getByRole('button', { name: 'Als gelesen markieren' }).click();
+  await expect(second.getByRole('button', { name: 'Als ungelesen markieren' })).toBeVisible();
+  await second.getByRole('button', { name: 'Als ungelesen markieren' }).click();
+  await expect(second.getByRole('button', { name: 'Als gelesen markieren' })).toBeVisible();
+
+  // Bookmark and filter by "Gemerkt".
+  await second.getByRole('button', { name: 'Merken' }).click();
+  await expect(second.getByRole('button', { name: 'Merken' })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Gemerkt' }).click();
+  await expect(entries).toHaveCount(1);
+  await expect(entries.first()).toContainText('Meldung 2:');
+  await page.getByRole('button', { name: 'Gemerkt' }).click();
+
+  // Type filter.
+  await page.getByRole('group', { name: 'Typ' }).getByRole('button', { name: 'Videos' }).click();
+  await expect(entries.first()).toContainText('Testvideo');
+  for (const type of await entries.evaluateAll((nodes) => nodes.map((node) => node.getAttribute('data-type')))) expect(type).toBe('video');
+
+  // Unread filter off shows read archive items too.
+  await page.getByRole('group', { name: 'Typ' }).getByRole('button', { name: 'News' }).click();
+  await expect(entries).toHaveCount(10);
+  await page.getByRole('button', { name: 'Ungelesen' }).click();
+  await expect(entries).toHaveCount(15);
+
+  expect(foreign).toEqual([]);
+});

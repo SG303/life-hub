@@ -1,0 +1,46 @@
+{
+  "name": "life-hub",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Personal self-hosted daily cockpit for tasks, feeds and a swappable AI agent",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "dev": "npm run build && node dist/server/server.js",
+    "start": "node dist/server/server.js",
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "tsc -p tsconfig.build.json",
+    "build:web": "vite build --config web/vite.config.ts",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p e2e/tsconfig.json --noEmit && svelte-check --tsconfig web/tsconfig.json --fail-on-warnings",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "harness": "node test/harness/run.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "fast-xml-parser": "5.12.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@fontsource-variable/archivo": "5.3.0",
+    "@playwright/test": "1.65.1",
+    "@sveltejs/vite-plugin-svelte": "7.3.2",
+    "@types/markdown-it": "14.2.0",
+    "@types/node": "26.6.7",
+    "eslint": "10.15.0",
+    "eslint-plugin-svelte": "3.24.1",
+    "globals": "17.14.0",
+    "markdown-it": "15.0.3",
+    "svelte": "5.59.1",
+    "svelte-check": "4.7.8",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.74.0",
+    "vite": "8.3.8",
+    "vitest": "5.1.1"
+  }
+}
