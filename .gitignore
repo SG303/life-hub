@@ -1,0 +1,33 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# Local runtime & SQLite data
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite*
+
+# Node / TypeScript
+node_modules/
+dist/
+build/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# Tests & logs
+playwright-report/
+test-results/
+*.log
+npm-debug.log*
+
+# OS & editor junk
+.DS_Store
+Thumbs.db
