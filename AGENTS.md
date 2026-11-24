@@ -9,12 +9,16 @@ personal data; English for everything in the repo; talk to me in German.
 
 ## Commands
 
-Repository is freshly bootstrapped (application code not yet scaffolded; update these commands in the first implementation PR):
+Node.js 26 (`.nvmrc`; keep in sync with the `Dockerfile` base image and CI).
 
-- Setup: `npm ci` (planned)
-- Test: `npm test` (Vitest, planned) and `npm run test:e2e` (Playwright, planned)
-- Lint and typecheck: `npm run lint` / `npm run typecheck` (ESLint flat config + `tsc`, planned)
-- Run locally: bind UI/API server to `0.0.0.0` (never `localhost`) and MCP endpoint on dedicated `MCP_PORT`
+- Setup: `npm ci`
+- Build: `npm run build` (server via `tsc` to `dist/server`, web via Vite to `dist/web`)
+- Lint and typecheck: `npm run lint` (ESLint flat config incl. module-boundary rules) / `npm run typecheck` (`tsc` + `svelte-check`)
+- Unit/integration tests: `npm test` (Vitest)
+- End-to-end: `npm run build && npm run test:e2e` (Playwright, desktop + 390px mobile behind a local HTTPS proxy; `E2E_APP=docker` runs against the `life-hub:test` image)
+- Docker smoke test: `./scripts/docker-smoke.sh`
+- Local harness (fixture feeds, fake YouTube, mock agent, app, HTTPS proxy): `npm run harness`
+- Run locally: `npm run dev` binds UI/API to `0.0.0.0:3000` and MCP to `0.0.0.0:3001` (set `ALLOWED_HOSTS` to the LAN/Tailscale address you use)
 
 ## Release
 
@@ -27,7 +31,10 @@ Semantic Versioning (`vX.Y.Z`) with `CHANGELOG.md` (Keep a Changelog). No automa
 - **API-first modularity:** The web UI talks exclusively to `/api/v1/*` JSON endpoints so a future native Android app can reuse the same backend contract. Keep domains (`tasks`, `feeds`, `chat`, `cockpit`) isolated behind public module interfaces.
 - **Agent isolation & swappability:** External AI agent configuration is strictly via environment variables (`AGENT_BASE_URL`, `AGENT_API_KEY`, `AGENT_MODEL`, `AGENT_TIMEOUT_MS`), never stored in SQLite or exposed to browsers. The stateless Streamable HTTP `/mcp` endpoint listens on its own `MCP_PORT`, fails closed when `MCP_AUTH_TOKEN` is unset or shorter than 32 characters, and exposes only read-only bounded tools in v1.
 - **Persistence:** Embedded SQLite inside a persistent `/data` directory (WAL mode, foreign keys enabled, busy timeout, forward-only startup migrations, automatic pre-migration and daily online backups). Never commit `.env` files or database files.
-- **Pending baseline files (empty repo):** Add `.github/dependabot.yml` and `.github/workflows/` (`ci.yml`, `workflow-lint.yml`, `dependabot-auto-merge.yml`) from `sgstack/baseline/templates/` as soon as `package.json` and `Dockerfile` are added.
+- **Layout:** `src/core` (database, HTTP, security), `src/modules/<domain>` (each exposes only `index.ts`; enforced by ESLint `no-restricted-imports`), `src/mcp` (MCP endpoint), `web/` (Svelte 5 PWA), `test/` (Vitest, fixtures, harness), `e2e/` (Playwright).
+- **Schema changes:** add a new numbered entry to `src/core/migrations.ts`; never edit a released migration.
+- **Untrusted content:** feed text is stored as plain text and rendered escaped; assistant replies go only through `web/src/lib/markdown.ts` (no raw HTML, no images, `http(s)` links only). Keep the CSP strict (no inline scripts/styles, no data: fonts).
+- **Tests without internet:** all tests use local fixtures and the mock agent; never depend on live feeds, YouTube or a real agent.
 
 ## Deviations from baseline
 

@@ -7,4 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Life Hub v1: German PWA with the views Heute, Aufgaben, Feeds, Chat and Quellen, served from a single Node.js container with embedded SQLite.
+- Tasks with note, civil due date (evaluated in `TZ`), list and status filters.
+- RSS/Atom feed reader for News, YouTube and Podcasts: YouTube channel URL resolution, OPML import, automatic refresh every 30 minutes plus manual refresh, first-subscribe unread cap, 30-day retention without resurrecting pruned items, SSRF protection.
+- Chat with any OpenAI-compatible agent configured via environment variables, persistent threads, **Agent fragen** snapshots and a German error state with retry.
+- Read-only MCP endpoint on its own port with bearer-token authentication for the agent.
+- Daily and pre-migration SQLite backups, Docker image with health check and `compose.yaml`.
+- CI (lint, typecheck, tests, build, Playwright end-to-end, Docker smoke test), workflow lint and Dependabot.
 - Initial repository bootstrap on SG303 baseline v2.
