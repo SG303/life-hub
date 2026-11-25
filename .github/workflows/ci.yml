@@ -1,6 +1,8 @@
 # CI for Node/TypeScript projects with npm, ESLint and Vitest (baseline v2),
 # plus Playwright end-to-end tests and a Docker smoke test for this app.
 # Make the "test" job a required check in the ruleset.
+# On main, a new version in package.json (see "Release" in AGENTS.md) is tagged
+# as v<version> and released with its CHANGELOG.md section once all jobs pass.
 name: CI
 
 on:
@@ -13,7 +15,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel runs on main: they may release a version.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -64,3 +67,33 @@ jobs:
           persist-credentials: false
       - name: Docker smoke test
         run: ./scripts/docker-smoke.sh
+
+  # Tags a new version and publishes its release notes from CHANGELOG.md.
+  # A version is released once; an existing tag is never moved.
+  release:
+    needs: [test, e2e, docker]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the tag and the GitHub release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if gh api "repos/$REPO/git/ref/tags/v$version" --silent 2>/dev/null; then
+            echo "v$version is already released"
+            exit 0
+          fi
+          node scripts/release.ts notes > notes.md
+          gh release create "v$version" --repo "$REPO" --target "$GITHUB_SHA" \
+            --title "v$version" --notes-file notes.md --latest

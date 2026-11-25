@@ -90,6 +90,18 @@ Life Hub writes a daily online backup (`VACUUM INTO`) and a backup before every 
 
 Also keep a copy of `.env` outside Git.
 
+### Updating
+
+Every version is a git tag `vX.Y.Z` with a GitHub release whose notes list the changes (see `CHANGELOG.md`). To update, check out the release and rebuild:
+
+```sh
+git fetch --tags
+git checkout vX.Y.Z
+docker compose up -d --build
+```
+
+Schema migrations run on startup after an automatic backup. `/api/v1/health` shows the running version. To roll back, check out the older tag the same way; after a schema migration, also restore the matching backup (see above).
+
 ## Development
 
 Node.js 26 (see `.nvmrc`), npm.
@@ -105,6 +117,7 @@ npm run test:e2e     # Playwright, desktop and 390px mobile, behind a local HTTP
 E2E_APP=docker npm run test:e2e   # same against the life-hub:test image
 ./scripts/docker-smoke.sh         # builds the image and checks user, health, ports, persistence
 npm run harness      # fixture feeds, fake YouTube, mock agent, Life Hub and HTTPS proxy until Ctrl+C
+npm run release -- <major|minor|patch>   # prepare a release in the PR (see Release in AGENTS.md)
 ```
 
 The test harness (`test/harness`) runs without internet access or a real agent: it serves deterministic feeds (including XSS and prompt-injection payloads), a fake YouTube host, and a mock OpenAI-compatible agent that calls Life Hub's `/mcp` during each chat turn.
@@ -120,6 +133,7 @@ src/
 web/                             Svelte 5 PWA (talks only to /api/v1)
 test/                            Vitest tests, fixtures and the local harness
 e2e/                             Playwright tests
+scripts/                         Docker smoke test and release helper
 ```
 
 ## Status

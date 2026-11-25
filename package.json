@@ -1,6 +1,6 @@
 {
   "name": "life-hub",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Personal self-hosted daily cockpit for tasks, feeds and a swappable AI agent",
   "license": "MIT",
@@ -18,7 +18,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p e2e/tsconfig.json --noEmit && svelte-check --tsconfig web/tsconfig.json --fail-on-warnings",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "harness": "node test/harness/run.ts"
+    "harness": "node test/harness/run.ts",
+    "release": "node scripts/release.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
