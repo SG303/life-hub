@@ -24,3 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With `MCP_EXPOSE_TASK_NOTES=false`, the MCP `search` tool no longer matches text that only appears in task notes.
 - Pruned feed items no longer come back as unread after 180 days: seen-item tombstones are now kept until the source is deleted.
 - Feed fetches now have a total deadline across all redirects, so one slow feed can no longer stall every refresh.
+- YouTube channel resolution only accepts pages from YouTube hosts and no longer follows redirects elsewhere.
+- Feed fetching drops cookies and cache validators when a redirect leaves the original origin, and rejects invalid redirect targets cleanly.
+- SSRF protection checks the IPv4 address inside NAT64 addresses (`64:ff9b::/96`) and blocks the local-use NAT64 range.
+- OPML import skips feed URLs that contain a user name or password.

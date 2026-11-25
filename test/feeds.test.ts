@@ -190,6 +190,19 @@ describe('YouTube channel resolution', () => {
     await expect(resolveYouTubeFeed(new URL(`${base}/watch?v=abc`), base, fetcher, options)).rejects.toThrow(/RSS-Adresse/);
   });
 
+  it('only accepts channel pages served from YouTube hosts (no redirects elsewhere)', async () => {
+    let allowRedirect: ((url: URL) => boolean) | undefined;
+    const fetcher = async (target: string, opts: { allowRedirect?: (url: URL) => boolean }) => {
+      allowRedirect = opts.allowRedirect;
+      return { status: 200, url: 'https://evil.example/fake-channel', headers: {}, body: channelHtml() };
+    };
+    await expect(resolveYouTubeFeed(new URL(`${base}/${CHANNEL_HANDLE}`), base, fetcher, options)).rejects.toThrow(
+      YOUTUBE_FALLBACK_MESSAGE,
+    );
+    expect(allowRedirect?.(new URL('https://m.youtube.com/@x'))).toBe(true);
+    expect(allowRedirect?.(new URL('https://evil.example/@x'))).toBe(false);
+  });
+
   it('treats only channel-like paths on an injected test origin as YouTube', () => {
     const local = 'http://192.0.2.5:4610';
     expect(isYouTubeUrl(new URL(`${local}/@kanal`), local)).toBe(true);
@@ -221,8 +234,9 @@ describe('OPML import', () => {
       { url: 'https://blog.example/atom.xml', title: 'Blog' },
       { url: 'https://blog.example/atom.xml', title: 'Blog doppelt' },
       { url: 'javascript:alert(1)', title: 'Böse' },
+      { url: 'https://user:secret@private.example/feed.xml', title: 'Mit Passwort' },
     ]);
-    expect(feeds.importOpml(doc)).toEqual({ added: 3, skipped: 2, invalid: 1 });
+    expect(feeds.importOpml(doc)).toEqual({ added: 3, skipped: 2, invalid: 2 });
     const types = Object.fromEntries(feeds.listSources().map((s) => [s.title, s.type]));
     expect(types).toMatchObject({ Kanal: 'video', 'Mein Podcast': 'podcast', Blog: 'news' });
   });

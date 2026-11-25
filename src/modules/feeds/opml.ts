@@ -39,8 +39,11 @@ export function parseOpml(text: string): { entries: OpmlEntry[]; invalid: number
       const xmlUrl = outline['@_xmlUrl'];
       if (typeof xmlUrl === 'string') {
         const url = safeHttpUrl(xmlUrl);
-        if (url) entries.push({ url, title: htmlToText(label, 200) || null, hint });
-        else invalid++;
+        const parsed = url ? new URL(url) : undefined;
+        // Credentials in feed URLs would be stored and shown in plain text (and are refused on fetch anyway).
+        if (parsed && !parsed.username && !parsed.password) {
+          entries.push({ url: parsed.toString(), title: htmlToText(label, 200) || null, hint });
+        } else invalid++;
       }
       walk(outline.outline, hint, depth + 1);
     }

@@ -198,6 +198,14 @@ describe('SSRF protection', () => {
       } else if (req.url === '/redirect-loop') {
         res.writeHead(302, { Location: '/redirect-loop' });
         res.end();
+      } else if (req.url === '/redirect-other-origin') {
+        res.writeHead(302, { Location: `http://localhost:${p}/echo-headers` });
+        res.end();
+      } else if (req.url === '/redirect-same-origin') {
+        res.writeHead(302, { Location: '/echo-headers' });
+        res.end();
+      } else if (req.url === '/echo-headers') {
+        res.end(JSON.stringify({ cookie: req.headers.cookie ?? null, etag: req.headers['if-none-match'] ?? null }));
       } else if (req.url === '/big') {
         res.end('x'.repeat(20_000));
       } else if (req.url === '/slow') {
@@ -227,6 +235,16 @@ describe('SSRF protection', () => {
     expect(blockedAddressReason('2606:4700::1', false)).toBeUndefined();
   });
 
+  it('checks the IPv4 address embedded in NAT64 addresses', () => {
+    for (const ip of ['64:ff9b::127.0.0.1', '64:ff9b::a00:1', '64:ff9b::169.254.169.254', '64:ff9b::c0a8:101', '64:ff9b:1::5']) {
+      expect(blockedAddressReason(ip, false), ip).toBe('private address');
+      expect(blockedAddressReason(ip, true), ip).toBeUndefined();
+    }
+    expect(blockedAddressReason('64:ff9b::0.0.0.0', true)).toBe('reserved address');
+    expect(blockedAddressReason('64:ff9b::1', true)).toBe('reserved address'); // 0.0.0.1
+    expect(blockedAddressReason('64:ff9b::93.184.215.14', false)).toBeUndefined();
+  });
+
   it('blocks loopback by default, by IP literal and after DNS resolution', async () => {
     await expect(safeFetch(`http://127.0.0.1:${p}/feed`, options)).rejects.toMatchObject({ reason: 'blocked' });
     await expect(safeFetch(`http://localhost:${p}/feed`, options)).rejects.toMatchObject({ reason: 'blocked' });
@@ -244,6 +262,20 @@ describe('SSRF protection', () => {
     await expect(safeFetch(`http://127.0.0.1:${p}/redirect-loop`, allowed)).rejects.toMatchObject({ reason: 'redirects' });
     await expect(safeFetch(`http://127.0.0.1:${p}/big`, allowed)).rejects.toMatchObject({ reason: 'too_large' });
     await expect(safeFetch('file:///etc/passwd', allowed)).rejects.toMatchObject({ reason: 'scheme' });
+  });
+
+  it('drops cookies and cache validators on cross-origin redirects', async () => {
+    const allowed = { ...options, allowPrivate: true, headers: { Cookie: 'SOCS=x', 'If-None-Match': '"v1"' } };
+    const other = await safeFetch(`http://127.0.0.1:${p}/redirect-other-origin`, allowed);
+    expect(JSON.parse(other.body)).toEqual({ cookie: null, etag: null });
+    const same = await safeFetch(`http://127.0.0.1:${p}/redirect-same-origin`, allowed);
+    expect(JSON.parse(same.body)).toEqual({ cookie: 'SOCS=x', etag: '"v1"' });
+  });
+
+  it('lets callers restrict redirect targets', async () => {
+    const onlyIp = { ...options, allowPrivate: true, allowRedirect: (url: URL) => url.hostname === '127.0.0.1' };
+    await expect(safeFetch(`http://127.0.0.1:${p}/redirect-other-origin`, onlyIp)).rejects.toMatchObject({ reason: 'redirects' });
+    expect((await safeFetch(`http://127.0.0.1:${p}/redirect-same-origin`, onlyIp)).status).toBe(200);
   });
 
   it('enforces a total deadline, not just an idle timeout', async () => {

@@ -24,6 +24,8 @@ export interface FetchOptions {
   maxBytes: number;
   headers?: Record<string, string>;
   maxRedirects?: number;
+  /** Optional extra restriction on redirect targets (e.g. YouTube hosts only). */
+  allowRedirect?: (url: URL) => boolean;
 }
 
 export interface FetchResult {
@@ -59,15 +61,32 @@ const PRIVATE = blockList([
   ['169.254.0.0', 16],
   ['100.64.0.0', 10],
   ['::1', 128],
+  ['64:ff9b:1::', 48], // local-use NAT64 (RFC 8215)
   ['fc00::', 7],
   ['fe80::', 10],
 ]);
+
+/** Well-known NAT64 prefix (RFC 6052): the last 32 bits are an IPv4 address. */
+const NAT64 = blockList([['64:ff9b::', 96]]);
+
+/** Returns the IPv4 address embedded in a `64:ff9b::/96` address, otherwise `undefined`. */
+function nat64Ipv4(ip: string): string | undefined {
+  if (!net.isIPv6(ip) || !NAT64.check(ip, 'ipv6')) return undefined;
+  // The URL parser normalises to compressed hex, e.g. `64:ff9b::7f00:1`.
+  const host = new URL(`http://[${ip}]`).hostname.slice(1, -1);
+  const groups = host.slice(host.indexOf('::') + 2).split(':').filter(Boolean).map((group) => parseInt(group, 16));
+  while (groups.length < 2) groups.unshift(0);
+  const [high, low] = groups as [number, number];
+  return [high >> 8, high & 255, low >> 8, low & 255].join('.');
+}
 
 /** Returns a reason if `address` must not be contacted, otherwise `undefined`. */
 export function blockedAddressReason(address: string, allowPrivate: boolean): string | undefined {
   const ip = unmapIpv4(address);
   const family = net.isIPv6(ip) ? 'ipv6' : 'ipv4';
   if (!net.isIP(ip)) return 'invalid address';
+  const embedded = nat64Ipv4(ip);
+  if (embedded) return blockedAddressReason(embedded, allowPrivate);
   if (ALWAYS_BLOCKED.check(ip, family)) return 'reserved address';
   if (!allowPrivate && PRIVATE.check(ip, family)) return 'private address';
   return undefined;
@@ -183,6 +202,13 @@ function requestOnce(url: URL, options: FetchOptions, deadline: number): Promise
   });
 }
 
+const ORIGIN_BOUND_HEADERS = new Set(['cookie', 'authorization', 'if-none-match', 'if-modified-since']);
+
+function withoutOriginBoundHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!headers) return headers;
+  return Object.fromEntries(Object.entries(headers).filter(([name]) => !ORIGIN_BOUND_HEADERS.has(name.toLowerCase())));
+}
+
 /**
  * GET with SSRF protection: only `http`/`https`, DNS checked on every hop
  * (private ranges blocked unless `allowPrivate`), bounded redirects, a total
@@ -197,6 +223,7 @@ export const safeFetch: Fetcher = async (input, options) => {
   }
   const deadline = Date.now() + options.timeoutMs;
   const maxRedirects = options.maxRedirects ?? 5;
+  let headers = options.headers;
   for (let hop = 0; ; hop++) {
     if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new FetchError('scheme', 'Only http and https are allowed');
     if (url.username || url.password) throw new FetchError('scheme', 'Credentials in URLs are not allowed');
@@ -204,11 +231,20 @@ export const safeFetch: Fetcher = async (input, options) => {
     if (net.isIP(literal) && blockedAddressReason(literal, options.allowPrivate)) {
       throw new FetchError('blocked', 'Address not allowed');
     }
-    const result = await requestOnce(url, options, deadline);
+    const result = await requestOnce(url, { ...options, headers }, deadline);
     const location = result.headers.location;
     if ([301, 302, 303, 307, 308].includes(result.status) && location) {
       if (hop >= maxRedirects) throw new FetchError('redirects', 'Too many redirects');
-      url = new URL(location, url);
+      let next: URL;
+      try {
+        next = new URL(location, url);
+      } catch {
+        throw new FetchError('redirects', 'Invalid redirect target');
+      }
+      if (options.allowRedirect && !options.allowRedirect(next)) throw new FetchError('redirects', 'Redirect target not allowed');
+      // Cookies and cache validators belong to the origin they were meant for.
+      if (next.origin !== url.origin) headers = withoutOriginBoundHeaders(headers);
+      url = next;
       continue;
     }
     return result;
