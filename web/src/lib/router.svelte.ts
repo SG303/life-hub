@@ -1,10 +1,11 @@
 /** Minimal History API router for the five top-level views. */
 
+/** In dock order: the agent (Chat) sits in the middle. */
 export const NAV = [
   { path: '/', label: 'Heute', icon: 'today' },
   { path: '/aufgaben', label: 'Aufgaben', icon: 'tasks' },
+  { path: '/chat', label: 'Chat', icon: 'agent' },
   { path: '/feeds', label: 'Feeds', icon: 'feeds' },
-  { path: '/chat', label: 'Chat', icon: 'chat' },
   { path: '/quellen', label: 'Quellen', icon: 'sources' },
 ] as const;
 

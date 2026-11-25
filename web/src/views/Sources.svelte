@@ -148,7 +148,7 @@
   {#if group.length}
     <section aria-labelledby="h-{type}">
       <h2 id="h-{type}">{TYPE_LABEL[type]} <span class="meta">{group.length}</span></h2>
-      <ul class="list">
+      <ul class="sheet">
         {#each group as source (source.id)}
           <li class="source" data-testid="source">
             {#if editingId === source.id}
@@ -214,10 +214,9 @@
     grid-template-columns: 1fr;
     gap: 0.75rem;
     align-items: end;
-    padding: 1rem;
-    border: 1px solid var(--rule);
-    border-radius: var(--radius-m);
-    background: var(--sheet);
+    padding: 1.1rem 1.25rem;
+    border-radius: var(--radius-l);
+    background: var(--surface);
   }
 
   .full {
@@ -234,7 +233,7 @@
   .status {
     min-height: 1.5rem;
     margin: 0.75rem 0;
-    color: var(--ink-soft);
+    color: var(--soft);
   }
 
   section {
@@ -242,14 +241,7 @@
   }
 
   h2 {
-    padding-bottom: 0.4rem;
-    border-bottom: 2px solid var(--ink);
-  }
-
-  .list {
-    margin: 0;
-    padding: 0;
-    list-style: none;
+    margin-bottom: 0.6rem;
   }
 
   .source {
@@ -258,7 +250,7 @@
     justify-content: space-between;
     gap: 0.5rem 1rem;
     padding: 0.85rem 0;
-    border-bottom: 1px solid var(--rule);
+    border-top: 1px solid var(--line);
   }
 
   .body {
@@ -268,7 +260,7 @@
 
   .title {
     margin: 0;
-    font-weight: 620;
+    font-weight: 650;
   }
 
   .url {
@@ -283,8 +275,8 @@
   .problem {
     margin: 0.35rem 0 0;
     padding-left: 0.6rem;
-    border-left: 3px solid var(--contour);
-    color: var(--contour);
+    border-left: 3px solid var(--warn);
+    color: var(--warn);
     font-size: var(--step--1);
   }
 
