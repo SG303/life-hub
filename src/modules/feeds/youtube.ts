@@ -66,13 +66,17 @@ export async function resolveYouTubeFeed(
   if (!isHandle && !isLegacy) throw new YouTubeResolveError(YOUTUBE_FALLBACK_MESSAGE);
 
   const path = isHandle ? `/${segments[0]}` : `/${segments[0]}/${segments[1]}`;
+  // Only YouTube itself (or the injected test origin) may answer; a redirect to the consent page
+  // or any other host ends in the fallback message instead of trusting foreign channel metadata.
+  const baseOrigin = new URL(baseUrl).origin;
+  const allowRedirect = (target: URL) => YOUTUBE_HOSTS.has(target.hostname.toLowerCase()) || target.origin === baseOrigin;
   try {
     const page = await fetcher(`${baseUrl}${path}`, {
       ...options,
       headers: { Cookie: 'CONSENT=YES+cb; SOCS=CAI', 'Accept-Language': 'de-CH,de;q=0.9,en;q=0.8', Accept: 'text/html' },
+      allowRedirect,
     });
-    const finalHost = new URL(page.url).hostname;
-    if (page.status !== 200 || finalHost.startsWith('consent.')) throw new YouTubeResolveError(YOUTUBE_FALLBACK_MESSAGE);
+    if (page.status !== 200 || !allowRedirect(new URL(page.url))) throw new YouTubeResolveError(YOUTUBE_FALLBACK_MESSAGE);
     const channelId = channelIdFromHtml(page.body);
     if (!channelId) throw new YouTubeResolveError(YOUTUBE_FALLBACK_MESSAGE);
     return channelFeedUrl(channelId, baseUrl);

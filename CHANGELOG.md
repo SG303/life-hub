@@ -31,3 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Feeds: "Weitere laden" no longer skips entries after marking items read or unbookmarking them under a filter, and a slow response can no longer overwrite the result of a newer filter.
 - Aufgaben: deleting a task now asks for confirmation, like deleting a source.
 - `compose.yaml` publishes the ports configured in `PORT`/`MCP_PORT`; `LIFE_HUB_BIND` and `MCP_BIND` are documented.
+- YouTube channel resolution only accepts pages from YouTube hosts and no longer follows redirects elsewhere.
+- Feed fetching drops cookies and cache validators when a redirect leaves the original origin, and rejects invalid redirect targets cleanly.
+- SSRF protection checks the IPv4 address inside NAT64 addresses (`64:ff9b::/96`) and blocks the local-use NAT64 range.
+- OPML import skips feed URLs that contain a user name or password.
