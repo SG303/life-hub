@@ -142,6 +142,11 @@ describe('MCP endpoint', () => {
     const client = await connect(u);
     const task = parse(await client.callTool({ name: 'get_task', arguments: { id: 26 } }));
     expect(task.note).toBeUndefined();
+    // A match that exists only in a hidden note must not be findable (search oracle).
+    const hits = parse(await client.callTool({ name: 'search', arguments: { query: 'Schlauch' } }));
+    expect((hits.tasks as { total: number }).total).toBe(0);
+    const titleHits = parse(await client.callTool({ name: 'search', arguments: { query: 'Velo' } }));
+    expect((titleHits.tasks as { total: number }).total).toBe(1);
     await client.close();
     s.close();
   });

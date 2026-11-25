@@ -107,6 +107,15 @@ function matchParts(parts: string[], segments: string[]): Record<string, string>
   return params;
 }
 
+/** Parses the request target. Returns `undefined` for malformed targets such as `//`. */
+export function requestUrl(req: IncomingMessage, base: string): URL | undefined {
+  try {
+    return new URL(req.url ?? '/', base);
+  } catch {
+    return undefined;
+  }
+}
+
 export function sendJson(res: ServerResponse, status: number, body?: unknown): void {
   if (body === undefined) {
     res.writeHead(status, { 'Cache-Control': 'no-store' });

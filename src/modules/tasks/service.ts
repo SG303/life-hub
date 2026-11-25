@@ -26,6 +26,8 @@ export interface TaskFilter {
   status?: 'open' | 'done' | 'all';
   category?: string;
   query?: string;
+  /** Whether `query` also matches notes (default `true`). */
+  searchNotes?: boolean;
   limit?: number;
   offset?: number;
 }
@@ -91,9 +93,14 @@ export class TaskService {
       params.push(filter.category);
     }
     if (filter.query) {
-      where.push(`(title LIKE ? ESCAPE '\\' OR note LIKE ? ESCAPE '\\')`);
       const like = `%${escapeLike(filter.query)}%`;
-      params.push(like, like);
+      if (filter.searchNotes === false) {
+        where.push(`title LIKE ? ESCAPE '\\'`);
+        params.push(like);
+      } else {
+        where.push(`(title LIKE ? ESCAPE '\\' OR note LIKE ? ESCAPE '\\')`);
+        params.push(like, like);
+      }
     }
     const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
     const total = (this.db.prepare(`SELECT COUNT(*) AS n FROM tasks ${clause}`).get(...params) as { n: number }).n;

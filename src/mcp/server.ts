@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { HttpError, readBody } from '../core/http.js';
+import { HttpError, readBody, requestUrl } from '../core/http.js';
 import { log } from '../core/log.js';
 import { FEED_TYPES, type FeedItem, type FeedService } from '../modules/feeds/index.js';
 import type { Task, TaskService } from '../modules/tasks/index.js';
@@ -145,7 +145,7 @@ export function buildMcpServer(deps: McpDeps): McpServer {
       annotations: readOnly,
     },
     ({ query, limit: size }) => {
-      const tasks = deps.tasks.list({ status: 'all', query, limit: size ?? 10 });
+      const tasks = deps.tasks.list({ status: 'all', query, searchNotes: deps.exposeTaskNotes, limit: size ?? 10 });
       const items = deps.feeds.listItems({ query, limit: size ?? 10 });
       return json({
         notice: UNTRUSTED_NOTE,
@@ -164,7 +164,11 @@ export function buildMcpServer(deps: McpDeps): McpServer {
  */
 export function createMcpHandler(deps: McpDeps): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   return async (req, res) => {
-    const url = new URL(req.url ?? '/', 'http://mcp.invalid');
+    const url = requestUrl(req, 'http://mcp.invalid');
+    if (!url) {
+      jsonRpcError(res, 400, 'Bad request');
+      return;
+    }
     if (url.pathname !== '/mcp') {
       jsonRpcError(res, 404, 'Not found');
       return;

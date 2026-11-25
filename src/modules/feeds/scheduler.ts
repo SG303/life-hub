@@ -43,7 +43,7 @@ export class FeedScheduler {
   private prune(): void {
     try {
       const result = this.service.pruneRetention();
-      if (result.items || result.tombstones) log.info('feed retention cleanup', result);
+      if (result.items) log.info('feed retention cleanup', result);
     } catch (error) {
       log.error('feed retention cleanup failed', { error: String(error) });
     }
