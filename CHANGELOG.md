@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-25
+
 ### Added
 
 - Life Hub v1: German PWA with the views Heute, Aufgaben, Feeds, Chat and Quellen, served from a single Node.js container with embedded SQLite.
@@ -17,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Daily and pre-migration SQLite backups, Docker image with health check and `compose.yaml`.
 - CI (lint, typecheck, tests, build, Playwright end-to-end, Docker smoke test), workflow lint and Dependabot.
 - Initial repository bootstrap on SG303 baseline v2.
+- Versioned releases: every version gets a git tag `vX.Y.Z` and a GitHub release with its changelog section; `/api/v1/health` reports the running version.
 
 ### Changed
 
@@ -41,3 +44,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Feed fetching drops cookies and cache validators when a redirect leaves the original origin, and rejects invalid redirect targets cleanly.
 - SSRF protection checks the IPv4 address inside NAT64 addresses (`64:ff9b::/96`) and blocks the local-use NAT64 range.
 - OPML import skips feed URLs that contain a user name or password.
+
+[Unreleased]: https://github.com/SG303/life-hub/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/SG303/life-hub/releases/tag/v0.1.0
