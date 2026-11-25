@@ -2,12 +2,15 @@
   import { untrack } from 'svelte';
   import Icon from '../components/Icon.svelte';
   import Sheet from '../components/Sheet.svelte';
+  import SwipeRow from '../components/SwipeRow.svelte';
   import ThreadMenu from '../components/ThreadMenu.svelte';
+  import UndoToast from '../components/UndoToast.svelte';
   import { api, type ChatContext, type ChatMessage, type ChatThread, type ToolTraceStep } from '../lib/api';
   import { ago } from '../lib/format';
   import { renderMarkdown } from '../lib/markdown';
   import { router } from '../lib/router.svelte';
   import { wakeLabel } from '../lib/snooze';
+  import { threadUndoPatch } from '../lib/swipe';
 
   const SETTLED_PAGE = 20;
 
@@ -24,7 +27,11 @@
   let composer = $state<HTMLTextAreaElement>();
   let log = $state<HTMLElement>();
   let menuThread = $state<ChatThread | undefined>();
+  let menuInitialView = $state<'main' | 'snooze'>('main');
   let menuOpen = $state(false);
+  let openSwipeId = $state<number | null>(null);
+  let undo = $state<{ id: number; message: string; onundo: () => Promise<void> } | undefined>();
+  let undoSeq = 0;
   let showSnoozed = $state(false);
   let showSettled = $state(false);
   let settledShown = $state(SETTLED_PAGE);
@@ -248,15 +255,56 @@
     return steps.length === 1 ? '1 Abfrage' : `${steps.length} Abfragen`;
   }
 
-  function openMenu(target: ChatThread) {
+  function openMenu(target: ChatThread, view: 'main' | 'snooze' = 'main') {
+    openSwipeId = null;
     menuThread = target;
+    menuInitialView = view;
     menuOpen = true;
+  }
+
+  function applyThreadUpdate(updated: ChatThread) {
+    threads = threads.map((t) => (t.id === updated.id ? updated : t));
+    if (thread?.id === updated.id) thread = updated;
   }
 
   function menuChanged(updated: ChatThread) {
     menuOpen = false;
-    threads = threads.map((t) => (t.id === updated.id ? updated : t));
-    if (thread?.id === updated.id) thread = updated;
+    applyThreadUpdate(updated);
+  }
+
+  async function swipeSettle(item: ChatThread) {
+    openSwipeId = null;
+    error = '';
+    const previous = { state: item.state, snoozedUntil: item.snoozedUntil };
+    const reactivate = item.state === 'settled';
+    try {
+      const updated = await api.updateThread(item.id, { settled: !reactivate });
+      applyThreadUpdate(updated);
+      const token = ++undoSeq;
+      undo = {
+        id: token,
+        message: reactivate ? 'Chat wieder aktiviert' : 'Chat erledigt',
+        onundo: async () => {
+          try {
+            applyThreadUpdate(await api.updateThread(item.id, threadUndoPatch(previous)));
+          } catch (e) {
+            error = (e as Error).message;
+          }
+        },
+      };
+    } catch (e) {
+      error = (e as Error).message;
+    }
+  }
+
+  async function swipePatch(item: ChatThread, patch: Parameters<typeof api.updateThread>[1]) {
+    openSwipeId = null;
+    error = '';
+    try {
+      applyThreadUpdate(await api.updateThread(item.id, patch));
+    } catch (e) {
+      error = (e as Error).message;
+    }
   }
 
   function menuDeleted(deleted: ChatThread) {
@@ -280,7 +328,8 @@
 
   // The list stays current when coming back from a conversation.
   $effect(() => {
-    void conversationOpen;
+    openSwipeId = null;
+    if (conversationOpen) undo = undefined;
     void loadThreads();
   });
 
@@ -290,18 +339,52 @@
 </script>
 
 {#snippet row(item: ChatThread)}
-  <li class="row" class:current={item.id === thread?.id} data-testid="thread">
-    <a href="/chat?thread={item.id}" onclick={(e) => open(e, `/chat?thread=${item.id}`)}>
-      <span class="row-title">{item.title}</span>
-      <span class="meta">
-        {#if item.woke}<span class="badge">Wieder da</span>{/if}
-        {rowMeta(item)}
-      </span>
-    </a>
-    <button class="button quiet icon" type="button" onclick={() => openMenu(item)} aria-label="Aktionen: {item.title}">
-      <Icon name="more" size={20} />
-    </button>
-  </li>
+  <SwipeRow
+    testid="thread"
+    open={openSwipeId === item.id}
+    onopen={(isOpen) => (openSwipeId = isOpen ? item.id : openSwipeId === item.id ? null : openSwipeId)}
+    right={{
+      label: item.state === 'settled' ? 'Aktivieren' : 'Erledigt',
+      icon: item.state === 'settled' ? 'undo' : 'check',
+      onclick: () => void swipeSettle(item),
+    }}
+    left={[
+      item.state === 'snoozed'
+        ? {
+            label: 'Aufwecken',
+            icon: 'clock',
+            tone: 'accent',
+            onclick: () => void swipePatch(item, { snoozedUntil: null }),
+          }
+        : {
+            label: 'Schlummern',
+            icon: 'clock',
+            tone: 'accent',
+            onclick: () => openMenu(item, 'snooze'),
+          },
+      {
+        label: item.state === 'pinned' ? 'Lösen' : 'Anheften',
+        icon: 'pin',
+        tone: 'neutral',
+        pressed: item.state === 'pinned',
+        filled: item.state === 'pinned',
+        onclick: () => void swipePatch(item, { pinned: item.state !== 'pinned' }),
+      },
+    ]}
+  >
+    <div class="row" class:current={item.id === thread?.id}>
+      <a href="/chat?thread={item.id}" onclick={(e) => open(e, `/chat?thread=${item.id}`)}>
+        <span class="row-title">{item.title}</span>
+        <span class="meta">
+          {#if item.woke}<span class="badge">Wieder da</span>{/if}
+          {rowMeta(item)}
+        </span>
+      </a>
+      <button class="button quiet icon" type="button" onclick={() => openMenu(item)} aria-label="Aktionen: {item.title}">
+        <Icon name="more" size={20} />
+      </button>
+    </div>
+  </SwipeRow>
 {/snippet}
 
 {#snippet agentBadge()}
@@ -473,9 +556,13 @@
 
 <Sheet bind:open={menuOpen} title={menuThread?.title ?? 'Chat'}>
   {#if menuThread}
-    <ThreadMenu thread={menuThread} onchanged={menuChanged} ondeleted={menuDeleted} />
+    <ThreadMenu thread={menuThread} initialView={menuInitialView} onchanged={menuChanged} ondeleted={menuDeleted} />
   {/if}
 </Sheet>
+
+{#if undo}
+  <UndoToast id={undo.id} message={undo.message} onundo={undo.onundo} ondismiss={() => (undo = undefined)} />
+{/if}
 
 <style>
   .list-head {
@@ -524,20 +611,17 @@
 
   .threads {
     margin: 0;
-    padding: 0.2rem 0.5rem;
+    padding: 0.2rem 0;
     border-radius: var(--radius-l);
     background: var(--surface);
     list-style: none;
+    overflow: hidden;
   }
 
   .row {
     display: flex;
     align-items: center;
-    border-top: 1px solid var(--line);
-  }
-
-  .row:first-child {
-    border-top: 0;
+    padding: 0 0.5rem;
   }
 
   .row.current a {

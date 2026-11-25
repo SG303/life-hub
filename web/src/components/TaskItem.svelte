@@ -3,14 +3,27 @@
   import { dueLabel, isOverdue } from '../lib/format';
   import { askAgent } from '../lib/router.svelte';
   import Icon from './Icon.svelte';
+  import SwipeRow from './SwipeRow.svelte';
 
   let {
     task,
     today,
     categories = [],
     compact = false,
+    swipeOpen = false,
+    onswipeopen,
+    onswiperight,
     onchange,
-  }: { task: Task; today: string; categories?: string[]; compact?: boolean; onchange: () => void } = $props();
+  }: {
+    task: Task;
+    today: string;
+    categories?: string[];
+    compact?: boolean;
+    swipeOpen?: boolean;
+    onswipeopen?: (open: boolean) => void;
+    onswiperight?: (task: Task) => void;
+    onchange: () => void;
+  } = $props();
 
   let editing = $state(false);
   let confirmDelete = $state(false);
@@ -54,7 +67,7 @@
   }
 </script>
 
-<li class="task" class:done={task.done} class:overdue class:compact data-testid="task">
+{#snippet inner()}
   <label class="check">
     <input
       type="checkbox"
@@ -121,19 +134,40 @@
       {/if}
     </div>
   {/if}
-</li>
+{/snippet}
+
+{#if compact}
+  <li class="task compact" class:done={task.done} class:overdue data-testid="task">
+    {@render inner()}
+  </li>
+{:else}
+  <SwipeRow
+    testid="task"
+    enabled={!editing && !confirmDelete}
+    open={swipeOpen}
+    onopen={onswipeopen}
+    right={{
+      label: task.done ? 'Öffnen' : 'Erledigt',
+      icon: task.done ? 'undo' : 'check',
+      onclick: () => (onswiperight ? onswiperight(task) : void run(() => api.updateTask(task.id, { done: !task.done }))),
+    }}
+    left={[
+      { label: 'Bearbeiten', icon: 'edit', tone: 'neutral', onclick: startEdit },
+      { label: 'Löschen', icon: 'trash', tone: 'danger', onclick: () => (confirmDelete = true) },
+    ]}
+  >
+    <div class="task" class:done={task.done} class:overdue>
+      {@render inner()}
+    </div>
+  </SwipeRow>
+{/if}
 
 <style>
   .task {
     display: grid;
     grid-template-columns: auto 1fr;
     gap: 0.25rem 0.85rem;
-    padding: 0.75rem 0;
-    border-top: 1px solid var(--line);
-  }
-
-  .task:first-child {
-    border-top: 0;
+    padding: 0.75rem 1.25rem;
   }
 
   .check {
@@ -264,6 +298,12 @@
   .compact {
     grid-template-columns: auto 1fr auto;
     align-items: center;
+    padding: 0.75rem 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .compact:first-child {
+    border-top: 0;
   }
 
   .compact .actions {

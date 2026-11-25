@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { api, type ChatThread, type ThreadPatch } from '../lib/api';
   import { localInputValue, snoozePresets, wakeLabel } from '../lib/snooze';
   import Icon from './Icon.svelte';
@@ -6,13 +7,19 @@
   /** Actions for one chat: pin, snooze, settle, auto-settle, rename, delete. Lives inside a Sheet. */
   let {
     thread,
+    initialView = 'main',
     onchanged,
     ondeleted,
-  }: { thread: ChatThread; onchanged: (thread: ChatThread) => void; ondeleted: (thread: ChatThread) => void } = $props();
+  }: {
+    thread: ChatThread;
+    initialView?: 'main' | 'snooze';
+    onchanged: (thread: ChatThread) => void;
+    ondeleted: (thread: ChatThread) => void;
+  } = $props();
 
-  let view = $state<'main' | 'snooze' | 'rename' | 'delete'>('main');
+  let view = $state<'main' | 'snooze' | 'rename' | 'delete'>(untrack(() => initialView));
   let title = $state('');
-  let custom = $state('');
+  let custom = $state(localInputValue(new Date(Date.now() + 24 * 60 * 60 * 1000)));
   let busy = $state(false);
   let error = $state('');
   const presets = snoozePresets();
