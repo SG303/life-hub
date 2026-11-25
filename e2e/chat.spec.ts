@@ -89,6 +89,40 @@ test('Agent fragen on a task and a feed item; the agent reads live data over MCP
   expect(foreign).toEqual([]);
 });
 
+test('a reply that arrives after switching chats stays in its own chat', async ({ page, request }, info) => {
+  const tag = `${info.project.name}-${Date.now()}`;
+  const client = api(request);
+  const other = await client.post<{ id: number }>('/chat/threads', {});
+  await client.post(`/chat/threads/${other.id}/messages`, { content: `Thema B ${tag}` });
+
+  // Hold the reply to the next message until the user has switched to the other chat.
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let replied!: () => void;
+  const delivered = new Promise<void>((resolve) => (replied = resolve));
+  await page.route('**/api/v1/chat/threads/*/messages', async (route) => {
+    const response = await route.fetch();
+    await gate;
+    await route.fulfill({ response });
+    replied();
+  });
+
+  await page.goto('/chat');
+  await send(page, `Frage A ${tag}`);
+  await expect(page.getByTestId('message-user')).toContainText(`Frage A ${tag}`);
+  const history = page.locator('details.history');
+  if ((await history.getAttribute('open')) === null) await history.locator('summary').click();
+  await page.locator(`a[href="/chat?thread=${other.id}"]`).click();
+  await expect(page.getByTestId('message-user').first()).toContainText(`Thema B ${tag}`);
+
+  release();
+  await delivered;
+  await expect(page).toHaveURL(new RegExp(`thread=${other.id}$`));
+  await expect(page.getByTestId('message-user')).toHaveCount(1);
+  await expect(page.getByTestId('message-user').first()).toContainText(`Thema B ${tag}`);
+  await expect(page.getByLabel('Nachricht')).toBeEnabled();
+});
+
 test('shows a German error with retry when the agent is down, while other views keep working', async ({ page }, info) => {
   const tag = `${info.project.name}-${Date.now()}`;
   await control('/agent/stop');

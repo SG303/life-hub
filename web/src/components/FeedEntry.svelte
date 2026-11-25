@@ -26,7 +26,7 @@
   }
 </script>
 
-<li class="entry" class:read={item.read} data-testid="feed-item" data-type={item.type}>
+<li class="entry" class:read={item.read} class:compact data-testid="feed-item" data-type={item.type}>
   <div class="body">
     <p class="meta">
       {#if !compact}<span class="type {item.type}">{TYPE_SINGULAR[item.type]}</span>{/if}
@@ -43,8 +43,8 @@
     {#if item.summary && !compact}<p class="summary">{item.summary}</p>{/if}
     {#if error}<p class="notice error" role="alert">{error}</p>{/if}
   </div>
-  {#if !compact}
-    <div class="actions">
+  <div class="actions">
+    {#if !compact}
       <button
         class="button quiet"
         type="button"
@@ -61,11 +61,11 @@
       >
         <Icon name="bookmark" size={18} filled={item.bookmarked} /><span>Merken</span>
       </button>
-      <button class="button quiet" type="button" onclick={() => askAgent('feed_item', item.id)}>
-        <Icon name="agent" size={18} /><span>Agent fragen</span>
-      </button>
-    </div>
-  {/if}
+    {/if}
+    <button class="button quiet" type="button" onclick={() => askAgent('feed_item', item.id)}>
+      <Icon name="agent" size={18} /><span>Agent fragen</span>
+    </button>
+  </div>
 </li>
 
 <style>
@@ -136,6 +136,26 @@
 
   .marked {
     color: var(--lake);
+  }
+
+  /* Compact (Heute): the only action sits beside the title as an icon button instead of its own row. */
+  .compact {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0 0.5rem;
+  }
+
+  .compact .actions {
+    margin: 0 -0.6rem 0 0;
+  }
+
+  .compact .actions span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
   }
 
   @media (max-width: 520px) {

@@ -27,11 +27,19 @@ export function setSecurityHeaders(res: ServerResponse): void {
 export function ipMatcher(entries: string[]): (address: string | undefined) => boolean {
   const list = new net.BlockList();
   for (const entry of entries) {
-    const [ip, prefix] = entry.split('/');
-    const family = net.isIPv6(ip ?? '') ? 'ipv6' : 'ipv4';
-    if (!ip || !net.isIP(ip)) throw new Error(`Invalid IP or CIDR in TRUSTED_PROXIES: ${entry}`);
-    if (prefix === undefined) list.addAddress(ip, family);
-    else list.addSubnet(ip, Number(prefix), family);
+    const invalid = new Error(`Invalid IP or CIDR in TRUSTED_PROXIES: ${entry}`);
+    const parts = entry.split('/');
+    const [ip, prefix] = parts;
+    if (parts.length > 2 || !ip || !net.isIP(ip)) throw invalid;
+    const family = net.isIPv6(ip) ? 'ipv6' : 'ipv4';
+    if (prefix === undefined) {
+      list.addAddress(ip, family);
+      continue;
+    }
+    // Strict prefix: a typo such as `10.0.0.1/` must not silently become `/0` (trust everyone).
+    const bits = /^\d{1,3}$/.test(prefix) ? Number(prefix) : NaN;
+    if (!(bits >= 0 && bits <= (family === 'ipv6' ? 128 : 32))) throw invalid;
+    list.addSubnet(ip, bits, family);
   }
   return (address) => {
     if (!address) return false;

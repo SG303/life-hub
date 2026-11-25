@@ -43,6 +43,8 @@ tailscale serve --bg 3000
 
 Then add the Serve host name (for example `life-hub.example.ts.net`) to `ALLOWED_HOSTS` and keep the Docker bridge in `TRUSTED_PROXIES` (default in `.env.example`) so `X-Forwarded-Proto`/`X-Forwarded-Host` are honoured. Any other reverse proxy works the same way. Plain HTTP on the LAN works as a normal browser tab.
 
+With Docker port publishing every client, not only the proxy, reaches the container from the Docker bridge. Life Hub therefore checks the `Host` header itself against `ALLOWED_HOSTS` as well as `X-Forwarded-Host`, so a forged forwarded header cannot get past the DNS-rebinding protection. A reverse proxy must either pass the original `Host` through or send a loopback name (`127.0.0.1`, `localhost`) or another name listed in `ALLOWED_HOSTS`.
+
 ### Agent (for example Hermes Agent)
 
 | Direction | Setting |
