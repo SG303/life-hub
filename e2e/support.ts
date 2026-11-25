@@ -49,9 +49,20 @@ export function watchForeignRequests(page: Page): string[] {
 }
 
 /** Navigates via the main navigation (the floating dock). */
-export async function nav(page: Page, label: 'Heute' | 'Aufgaben' | 'Feeds' | 'Chat' | 'Quellen'): Promise<void> {
+export async function nav(page: Page, label: 'Heute' | 'Aufgaben' | 'Feeds' | 'Chat' | 'Mehr'): Promise<void> {
   await page.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link', { name: label, exact: true }).click();
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
+}
+
+/** Opens the «Neue Aufgabe» sheet on Aufgaben, fills it and saves. */
+export async function addTask(page: Page, task: { title: string; dueDate?: string; category?: string }): Promise<void> {
+  await page.getByRole('button', { name: 'Neue Aufgabe' }).click();
+  const sheet = page.getByRole('dialog', { name: 'Neue Aufgabe' });
+  await sheet.getByLabel('Titel').fill(task.title);
+  if (task.dueDate !== undefined) await sheet.getByLabel('Fällig').fill(task.dueDate);
+  if (task.category !== undefined) await sheet.getByLabel('Liste').fill(task.category);
+  await sheet.getByRole('button', { name: 'Hinzufügen' }).click();
+  await expect(sheet).toBeHidden();
 }
 
 export function civilToday(): string {

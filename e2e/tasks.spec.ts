@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { civilToday, control, nav } from './support.ts';
+import { addTask, civilToday, control, nav } from './support.ts';
 
 test('creates, edits, filters, completes and deletes tasks; they survive a restart and show on Heute', async ({ page }, info) => {
   const tag = `${info.project.name}-${Date.now()}`;
@@ -7,14 +7,9 @@ test('creates, edits, filters, completes and deletes tasks; they survive a resta
   await page.goto('/aufgaben');
 
   // Create: one due today in a list, one without details.
-  await page.getByPlaceholder('Neue Aufgabe').fill(`Rechnung zahlen ${tag}`);
-  await page.locator('input[name="dueDate"]').fill(civilToday());
-  await page.locator('input[name="category"]').fill(list);
-  await page.getByRole('button', { name: 'Hinzufügen', exact: true }).click();
+  await addTask(page, { title: `Rechnung zahlen ${tag}`, dueDate: civilToday(), category: list });
   await expect(page.getByTestId('task').filter({ hasText: `Rechnung zahlen ${tag}` })).toBeVisible();
-  await page.getByPlaceholder('Neue Aufgabe').fill(`Velo putzen ${tag}`);
-  await page.locator('input[name="category"]').fill('');
-  await page.getByRole('button', { name: 'Hinzufügen', exact: true }).click();
+  await addTask(page, { title: `Velo putzen ${tag}`, category: '' });
 
   const due = page.getByTestId('task').filter({ hasText: `Rechnung zahlen ${tag}` });
   const bike = page.getByTestId('task').filter({ hasText: `Velo putzen ${tag}` });

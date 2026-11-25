@@ -27,7 +27,6 @@
   --step-1: 1.25rem;
   --step-2: 1.5rem;
   --step-3: clamp(2.5rem, 9vw, 3.75rem);
-  --step-4: clamp(4.25rem, 16vw, 7.5rem);
   --radius-s: 12px;
   --radius-m: 22px;
   --radius-l: 28px;
@@ -88,7 +87,7 @@ h3 {
   letter-spacing: -0.01em;
 }
 
-/* Page titles are set narrow and heavy; the weekday on Heute is the largest of them. */
+/* Page titles are set narrow and heavy. */
 h1 {
   font-size: var(--step-3);
   font-stretch: 75%;
@@ -303,7 +302,7 @@ textarea.input {
 .page-head {
   display: flex;
   flex-wrap: wrap;
-  align-items: end;
+  align-items: center;
   justify-content: space-between;
   gap: 0.75rem 1rem;
   margin: 0.5rem 0 1.5rem;

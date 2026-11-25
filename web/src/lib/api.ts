@@ -110,6 +110,7 @@ function query(params: Record<string, string | number | boolean | undefined>): s
 export type TaskPatch = Partial<Pick<Task, 'title' | 'note' | 'dueDate' | 'category' | 'done'>>;
 
 export const api = {
+  health: () => request<{ status: string; version: string }>('GET', '/health'),
   cockpit: () => request<Cockpit>('GET', '/cockpit'),
 
   tasks: (filter: { status?: string; category?: string; q?: string } = {}) =>

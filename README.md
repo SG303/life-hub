@@ -11,11 +11,11 @@ Personal, self-hosted daily cockpit (PWA) bringing together tasks, RSS/Atom feed
 
 | View | What it does |
 | --- | --- |
-| **Heute** | Overdue and due-today tasks (evaluated in `TZ`), the next open tasks, and the newest unread News, Videos and Podcasts (bounded per type). |
-| **Aufgaben** | Create, edit, check off, delete and filter tasks (title, note, `YYYY-MM-DD` due date, list). |
-| **Feeds** | Unified reader: filter by type, unread and `Gemerkt`; toggle read/bookmark; items open the original `http(s)` link (no embedded player). Excerpts are plain text. |
+| **Heute** | Agent status dot, overdue and due-today tasks (evaluated in `TZ`), the next open tasks, and the newest unread News, Videos and Podcasts (bounded per type). |
+| **Aufgaben** | Create (via the **Neue Aufgabe** sheet), edit, check off, delete and filter tasks (title, note, `YYYY-MM-DD` due date, list). |
+| **Feeds** | Unified reader: filter by type, unread and `Gemerkt`; toggle read/bookmark; items open the original `http(s)` link (no embedded player). Excerpts are plain text. **Neue Quelle** subscribes to a feed or YouTube channel. |
 | **Chat** | Chat with any OpenAI-compatible agent configured via environment variables. Threads are stored in Life Hub. **Agent fragen** on any task or feed item opens the composer with a visible, bounded snapshot. |
-| **Quellen** | Add/edit/remove RSS/Atom feeds and YouTube channels (`/channel/UC…`, `@handle`, `/c/…`, `/user/…` are resolved to the channel RSS feed), and import OPML. |
+| **Mehr** | Manage sources: add/edit/remove RSS/Atom feeds and YouTube channels (`/channel/UC…`, `@handle`, `/c/…`, `/user/…` are resolved to the channel RSS feed) and import OPML; shows the version and agent status. The old `/quellen` address redirects here. |
 
 The agent reads Life Hub through a separate, token-protected **MCP endpoint** (stateless Streamable HTTP, read-only tools `list_tasks`, `get_task`, `list_feed_items`, `get_feed_item`, `search`).
 

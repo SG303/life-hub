@@ -1,9 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 import { api, CONTROL, fixturesForApp, nav, removeAllSources, watchForeignRequests } from './support.ts';
 
+/** Subscribes through the «Neue Quelle» sheet; the sheet stays open when the address is rejected. */
 async function subscribe(page: Page, url: string): Promise<void> {
-  await page.getByLabel('Adresse (RSS/Atom-Feed oder YouTube-Kanal)').fill(url);
-  await page.getByRole('button', { name: 'Abonnieren' }).click();
+  const sheet = page.getByRole('dialog', { name: 'Neue Quelle' });
+  if (!(await sheet.isVisible())) await page.getByRole('button', { name: 'Neue Quelle' }).click();
+  await sheet.getByLabel('Adresse (RSS/Atom-Feed oder YouTube-Kanal)').fill(url);
+  await sheet.getByRole('button', { name: 'Abonnieren' }).click();
 }
 
 test.beforeEach(async ({ request }) => {
@@ -12,7 +15,9 @@ test.beforeEach(async ({ request }) => {
 
 test('manages sources: RSS, YouTube handle, podcast, edit, delete, OPML; refresh twice without duplicates', async ({ page, request }) => {
   const fixtures = await fixturesForApp();
+  // The old /quellen address still works and lands on Mehr.
   await page.goto('/quellen');
+  await expect(page).toHaveURL(/\/mehr$/);
 
   await subscribe(page, `${fixtures}/feeds/news.xml`);
   await expect(page.getByRole('status')).toContainText('15 Einträge, davon 10 ungelesen');
@@ -24,6 +29,7 @@ test('manages sources: RSS, YouTube handle, podcast, edit, delete, OPML; refresh
   // YouTube consent wall: clear German fallback.
   await subscribe(page, `${fixtures}/@consent-wall`);
   await expect(page.getByRole('alert')).toContainText('Bitte die RSS-Adresse direkt eintragen');
+  await page.getByRole('button', { name: 'Schliessen' }).click();
 
   const sources = page.getByTestId('source');
   await expect(page.getByRole('heading', { name: /^News/ })).toBeVisible();

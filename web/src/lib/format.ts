@@ -35,13 +35,5 @@ export function ago(iso: string | null, now: number = Date.now()): string {
   return new Intl.DateTimeFormat('de-CH', { day: 'numeric', month: 'short', year: 'numeric' }).format(Date.parse(iso));
 }
 
-export function longDate(today: string): { weekday: string; date: string } {
-  const time = civilToUtc(today);
-  return {
-    weekday: new Intl.DateTimeFormat('de-CH', { weekday: 'long', timeZone: 'UTC' }).format(time),
-    date: new Intl.DateTimeFormat('de-CH', { day: 'numeric', month: 'long', timeZone: 'UTC' }).format(time),
-  };
-}
-
 export const TYPE_LABEL = { news: 'News', video: 'Videos', podcast: 'Podcasts' } as const;
 export const TYPE_SINGULAR = { news: 'News', video: 'Video', podcast: 'Podcast' } as const;

@@ -6,8 +6,12 @@ export const NAV = [
   { path: '/aufgaben', label: 'Aufgaben', icon: 'tasks' },
   { path: '/chat', label: 'Chat', icon: 'agent' },
   { path: '/feeds', label: 'Feeds', icon: 'feeds' },
-  { path: '/quellen', label: 'Quellen', icon: 'sources' },
+  { path: '/mehr', label: 'Mehr', icon: 'more' },
 ] as const;
+
+/** Old paths that moved; replaced on load so bookmarks and installed shortcuts keep working. */
+const MOVED: Record<string, string> = { '/quellen': '/mehr' };
+if (MOVED[window.location.pathname]) history.replaceState(null, '', MOVED[window.location.pathname]);
 
 let location = $state({ path: window.location.pathname, search: window.location.search });
 
