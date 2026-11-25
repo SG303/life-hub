@@ -63,6 +63,7 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` / `MCP_PORT` | `3000` / `3001` | UI/API listener and MCP listener (both bind `0.0.0.0`). |
+| `LIFE_HUB_BIND` / `MCP_BIND` | `0.0.0.0` | Docker Compose only: host address the UI/API and MCP ports are published on (for example a Tailscale IP). |
 | `ALLOWED_HOSTS` | – | Host names the browser may use (DNS-rebinding protection). Loopback is always allowed. |
 | `TRUSTED_PROXIES` | – | IPs/CIDRs whose `X-Forwarded-*` headers are trusted. |
 | `TZ` | `Europe/Zurich` | Time zone for due dates. |

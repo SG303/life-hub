@@ -28,3 +28,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `Host` header is now checked against `ALLOWED_HOSTS` as well as `X-Forwarded-Host`. Behind Docker port publishing every client arrives from the bridge, so a forged forwarded header could bypass the DNS-rebinding protection for reads.
 - Malformed `TRUSTED_PROXIES` entries (such as `10.0.0.1/`, which used to mean "trust everyone") now stop the startup with an error.
 - Heute: feed entries now offer **Agent fragen** like everywhere else.
+- Feeds: "Weitere laden" no longer skips entries after marking items read or unbookmarking them under a filter, and a slow response can no longer overwrite the result of a newer filter.
+- Aufgaben: deleting a task now asks for confirmation, like deleting a source.
+- `compose.yaml` publishes the ports configured in `PORT`/`MCP_PORT`; `LIFE_HUB_BIND` and `MCP_BIND` are documented.

@@ -22,17 +22,26 @@
   let message = $state('');
   let error = $state('');
   let hasSources = $state(true);
+  let request = 0;
+
+  // Items toggled out of the filter (e.g. read under «Ungelesen») stay visible so the toggle can be
+  // undone, but they are no longer part of the server's result set: paging counts only matching items.
+  const matches = (item: FeedItem) => (!unread || !item.read) && (!bookmarked || item.bookmarked);
+  const matching = $derived(items.filter(matches).length);
 
   async function load(append = false) {
+    const current = ++request;
     try {
       const result = await api.items({
         type: type || undefined,
         unread,
         bookmarked,
         limit: PAGE,
-        offset: append ? items.length : 0,
+        offset: append ? matching : 0,
       });
-      items = append ? [...items, ...result.items] : result.items;
+      if (current !== request) return; // a newer filter or reload superseded this response
+      const known = new Set(items.map((item) => item.id));
+      items = append ? [...items, ...result.items.filter((item) => !known.has(item.id))] : result.items;
       total = result.total;
       error = '';
       if (!append && result.total === 0) hasSources = (await api.sources()).items.length > 0;
@@ -77,6 +86,8 @@
   }
 
   function updated(next: FeedItem) {
+    const previous = items.find((item) => item.id === next.id);
+    if (previous) total += Number(matches(next)) - Number(matches(previous));
     items = items.map((item) => (item.id === next.id ? next : item));
   }
 </script>
@@ -113,8 +124,8 @@
       <FeedEntry {item} onchange={updated} />
     {/each}
   </ul>
-  {#if items.length < total}
-    <button class="button more" type="button" onclick={() => load(true)}>Weitere laden ({total - items.length})</button>
+  {#if matching < total}
+    <button class="button more" type="button" onclick={() => load(true)}>Weitere laden ({total - matching})</button>
   {/if}
 {:else if loaded}
   {#if !hasSources}
