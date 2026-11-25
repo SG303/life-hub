@@ -26,12 +26,11 @@ Requirements: Docker with Compose, a host in your private network (LAN/Tailscale
 ```sh
 cp .env.example .env
 # edit .env: LIFE_HUB_VERSION, ALLOWED_HOSTS, AGENT_*, and a token: openssl rand -hex 32 -> MCP_AUTH_TOKEN
-docker login ghcr.io -u <github-user>   # once; password: a classic token with only read:packages
 docker compose pull
 docker compose up -d
 ```
 
-Every release publishes its image to `ghcr.io/sg303/life-hub` (tags `X.Y.Z` and `X.Y`). The package is private like the repository, hence the one-time `docker login`. To build from source instead, skip the login and run `docker compose up -d --build`.
+Every release publishes its image to `ghcr.io/sg303/life-hub` (tags `X.Y.Z` and `X.Y`). To build from source instead, run `docker compose up -d --build`.
 
 - Web app and `/api/v1`: `http://<host>:3000` (no login: keep it on the private network).
 - MCP endpoint for the agent: `http://<host>:3001/mcp` with `Authorization: Bearer <MCP_AUTH_TOKEN>`.
