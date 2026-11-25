@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-25
+
+### Added
+
+- Every release publishes its container image to GHCR as `ghcr.io/sg303/life-hub:X.Y.Z` and `:X.Y`, so updating no longer needs the source code or a local build.
+
+### Changed
+
+- `compose.yaml` runs the image for `LIFE_HUB_VERSION` from `.env` (now required) and pulls it from GHCR; `docker compose up -d --build` still builds it from source.
+
 ## [0.1.0] - 2026-11-25
 
 ### Added
@@ -45,5 +55,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SSRF protection checks the IPv4 address inside NAT64 addresses (`64:ff9b::/96`) and blocks the local-use NAT64 range.
 - OPML import skips feed URLs that contain a user name or password.
 
-[Unreleased]: https://github.com/SG303/life-hub/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/SG303/life-hub/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/SG303/life-hub/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/SG303/life-hub/releases/tag/v0.1.0
