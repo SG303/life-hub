@@ -1,6 +1,6 @@
 # life-hub
 
-Personal, single-user self-hosted daily cockpit (mobile-friendly PWA web app) combining tasks, RSS/Atom feeds (News, YouTube, Podcasts), and a swappable external AI agent over OpenAI-compatible chat and MCP. Runs as a single Docker container on a headless home server over private LAN and Tailscale. Private repository on GitHub (`SG303/life-hub`).
+Personal, single-user self-hosted daily cockpit (mobile-friendly PWA web app) combining tasks, RSS/Atom feeds (News, YouTube, Podcasts), and a swappable external AI agent over OpenAI-compatible chat and MCP. Runs as a single Docker container on a headless home server over private LAN and Tailscale. Public repository on GitHub (`SG303/life-hub`).
 
 Follows the SG303 baseline v2 (`sgstack/global/AGENTS.md`,
 `sgstack/baseline/tools.md`). If you cannot read those: work on a branch,
