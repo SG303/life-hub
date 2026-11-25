@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import FeedEntry from '../components/FeedEntry.svelte';
   import Icon from '../components/Icon.svelte';
   import Sheet from '../components/Sheet.svelte';
@@ -22,6 +23,7 @@
   let items = $state<FeedItem[]>([]);
   let total = $state(0);
   let loaded = $state(false);
+  let loading = $state(false);
   let refreshing = $state(false);
   let message = $state('');
   let error = $state('');
@@ -42,6 +44,7 @@
 
   async function load(append = false) {
     const current = ++request;
+    if (!append) loading = true;
     try {
       const result = await api.items({
         type: type || undefined,
@@ -57,18 +60,22 @@
       error = '';
       if (!append && result.total === 0) hasSources = (await api.sources()).items.length > 0;
     } catch (e) {
-      error = (e as Error).message;
+      if (current === request) error = (e as Error).message;
     } finally {
-      loaded = true;
+      if (current === request) {
+        loaded = true;
+        loading = false;
+      }
     }
   }
 
   $effect(() => {
-    void type;
+    const selectedType = type;
     void unread;
     void bookmarked;
     openSwipeId = null;
     undo = undefined;
+    if (selectedType) items = untrack(() => items).filter((item) => item.type === selectedType);
     void load();
   });
 
@@ -241,7 +248,7 @@
   {#if matching < total}
     <button class="button more" type="button" onclick={() => load(true)}>Weitere laden ({total - matching})</button>
   {/if}
-{:else if loaded}
+{:else if loaded && !loading}
   {#if !hasSources}
     <p class="empty">
       Noch keine Quellen abonniert.
