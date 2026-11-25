@@ -54,14 +54,14 @@
   }
 </script>
 
-<li class="task" class:done={task.done} class:overdue data-testid="task">
+<li class="task" class:done={task.done} class:overdue class:compact data-testid="task">
   <label class="check">
     <input
       type="checkbox"
       checked={task.done}
       onchange={() => run(() => api.updateTask(task.id, { done: !task.done }))}
     />
-    <span class="box" aria-hidden="true"><Icon name="check" size={16} /></span>
+    <span class="ring" aria-hidden="true"><Icon name="check" size={17} /></span>
     <span class="visually-hidden">{task.done ? 'Als offen markieren' : 'Als erledigt markieren'}: {task.title}</span>
   </label>
 
@@ -87,7 +87,7 @@
     {:else}
       <p class="title">{task.title}</p>
       <p class="meta">
-        {#if task.dueDate}<span class="due">{dueLabel(task.dueDate, today)}</span>{/if}
+        {#if task.dueDate && !(compact && task.dueDate === today && !task.done)}<span class="due">{dueLabel(task.dueDate, today)}</span>{/if}
         {#if task.category}<span class="category">{task.category}</span>{/if}
       </p>
       {#if task.note && !compact}<p class="note">{task.note}</p>{/if}
@@ -128,8 +128,12 @@
     display: grid;
     grid-template-columns: auto 1fr;
     gap: 0.25rem 0.85rem;
-    padding: 0.85rem 0;
-    border-bottom: 1px solid var(--rule);
+    padding: 0.75rem 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .task:first-child {
+    border-top: 0;
   }
 
   .check {
@@ -138,84 +142,91 @@
     place-items: center;
     width: 2.75rem;
     height: 2.75rem;
-    margin: -0.45rem 0 0 -0.45rem;
+    margin: -0.4rem 0 0 -0.45rem;
     cursor: pointer;
   }
 
   .check input {
     position: absolute;
     inset: 0;
+    margin: 0;
     opacity: 0;
     cursor: pointer;
   }
 
-  .box {
+  .ring {
     display: grid;
     place-items: center;
-    width: 1.5rem;
-    height: 1.5rem;
-    border: 2px solid var(--ink-soft);
+    width: 1.85rem;
+    height: 1.85rem;
+    border: 2px solid var(--accent);
     border-radius: 50%;
     color: transparent;
+    transition: background-color 180ms ease, transform 180ms ease;
   }
 
-  .check:hover .box {
-    border-color: var(--forest);
-    color: var(--forest);
+  .ring :global(svg) {
+    stroke-width: 2.6;
   }
 
-  .check input:focus-visible + .box {
-    outline: 3px solid var(--focus);
-    outline-offset: 2px;
+  .check:hover .ring {
+    background: var(--accent-wash);
   }
 
-  .done .box {
-    background: var(--forest);
-    border-color: var(--forest);
-    color: var(--sheet);
+  .check input:focus-visible + .ring {
+    outline: 3px solid var(--accent);
+    outline-offset: 3px;
+  }
+
+  .done .ring {
+    background: var(--accent);
+    color: var(--accent-on);
+    transform: scale(1.04);
   }
 
   .body {
     min-width: 0;
+    align-self: center;
   }
 
   .title {
     margin: 0;
-    font-weight: 560;
+    font-size: 1.0625rem;
+    font-weight: 600;
+    line-height: 1.3;
     overflow-wrap: anywhere;
   }
 
   .done .title {
-    color: var(--ink-soft);
+    color: var(--soft);
     text-decoration: line-through;
-    text-decoration-thickness: 1px;
+    text-decoration-thickness: 1.5px;
   }
 
   .meta {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.75rem;
-    margin: 0.1rem 0 0;
+    align-items: center;
+    gap: 0.2rem 0.6rem;
+    margin: 0.15rem 0 0;
   }
 
   .meta:empty {
     display: none;
   }
 
+  /* Overdue is the only place ochre appears. */
   .overdue .due {
-    color: var(--contour);
-    font-weight: 650;
-  }
-
-  .category {
-    padding: 0 0.5rem;
+    padding: 0.05rem 0.55rem;
     border-radius: 999px;
-    background: var(--lake-wash);
+    background: var(--badge);
+    color: var(--badge-ink);
+    font-weight: 650;
   }
 
   .note {
     margin: 0.35rem 0 0;
-    color: var(--ink-soft);
+    color: var(--soft);
     white-space: pre-line;
     overflow-wrap: anywhere;
     max-width: 65ch;
@@ -227,13 +238,13 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 0.25rem;
-    margin-left: -0.6rem;
+    margin-left: -0.7rem;
   }
 
   .confirm {
     flex-basis: 100%;
-    margin-left: 0.6rem;
-    color: var(--ink-soft);
+    margin-left: 0.7rem;
+    color: var(--soft);
     font-size: var(--step--1);
   }
 
@@ -249,6 +260,32 @@
     gap: 0.75rem;
   }
 
+  /* Compact (Heute): «Agent fragen» is an icon button beside the title. */
+  .compact {
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+  }
+
+  .compact .actions {
+    grid-column: 3;
+    grid-row: 1;
+    margin: 0 -0.5rem 0 0;
+  }
+
+  .compact .actions :global(.button) {
+    width: 2.75rem;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .compact .actions span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
   @media (min-width: 640px) {
     .task {
       grid-template-columns: auto 1fr auto;
@@ -258,7 +295,15 @@
     .actions {
       grid-column: 3;
       grid-row: 1;
-      margin: -0.35rem 0 0;
+      margin: -0.2rem -0.5rem 0 0;
+    }
+
+    .compact {
+      align-items: center;
+    }
+
+    .compact .actions {
+      margin-top: 0;
     }
   }
 </style>

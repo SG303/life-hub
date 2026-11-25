@@ -18,6 +18,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI (lint, typecheck, tests, build, Playwright end-to-end, Docker smoke test), workflow lint and Dependabot.
 - Initial repository bootstrap on SG303 baseline v2.
 
+### Changed
+
+- New look: dark grey with an olive accent (light and dark follow the system), Bricolage Grotesque as the typeface and a new app icon.
+- Navigation is a floating dock on every screen size, with the agent (Chat) in the middle.
+- Heute: today's and overdue tasks share one «Heute fällig» panel (overdue ones carry an ochre badge), and new feed entries appear as cards you can swipe through on the phone and bookmark directly.
+
 ### Fixed
 
 - A malformed request target (such as `//`) no longer crashes the whole process; the UI and MCP ports answer `400`.

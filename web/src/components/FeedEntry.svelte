@@ -52,16 +52,16 @@
       >
         <Icon name="read" size={18} /><span>{item.read ? 'Als ungelesen markieren' : 'Als gelesen markieren'}</span>
       </button>
-      <button
-        class="button quiet"
-        class:marked={item.bookmarked}
-        type="button"
-        aria-pressed={item.bookmarked}
-        onclick={() => update({ bookmarked: !item.bookmarked })}
-      >
-        <Icon name="bookmark" size={18} filled={item.bookmarked} /><span>Merken</span>
-      </button>
     {/if}
+    <button
+      class="button quiet"
+      class:marked={item.bookmarked}
+      type="button"
+      aria-pressed={item.bookmarked}
+      onclick={() => update({ bookmarked: !item.bookmarked })}
+    >
+      <Icon name="bookmark" size={18} filled={item.bookmarked} /><span>Merken</span>
+    </button>
     <button class="button quiet" type="button" onclick={() => askAgent('feed_item', item.id)}>
       <Icon name="agent" size={18} /><span>Agent fragen</span>
     </button>
@@ -71,7 +71,11 @@
 <style>
   .entry {
     padding: 0.9rem 0;
-    border-bottom: 1px solid var(--rule);
+    border-top: 1px solid var(--line);
+  }
+
+  .entry:first-child {
+    border-top: 0;
   }
 
   .meta {
@@ -83,41 +87,41 @@
 
   .type {
     font-weight: 650;
-    color: var(--lake);
+    color: var(--accent);
   }
 
   .title {
     display: block;
     margin: 0;
     color: var(--ink);
-    font-weight: 640;
-    font-size: 1.0625rem;
-    line-height: 1.35;
+    font-weight: 650;
+    font-size: 1.1875rem;
+    line-height: 1.25;
     text-decoration: none;
     overflow-wrap: anywhere;
   }
 
   a.title:hover {
     text-decoration: underline;
-    text-decoration-color: var(--lake);
+    text-decoration-color: var(--accent);
   }
 
   .external {
     display: inline-block;
     margin-left: 0.3rem;
-    color: var(--ink-soft);
+    color: var(--soft);
     vertical-align: -0.1em;
   }
 
   .read .title {
-    color: var(--ink-soft);
-    font-weight: 480;
+    color: var(--soft);
+    font-weight: 500;
   }
 
   .summary {
     margin: 0.35rem 0 0;
     max-width: 68ch;
-    color: var(--ink-soft);
+    color: var(--soft);
     white-space: pre-line;
     overflow-wrap: anywhere;
     display: -webkit-box;
@@ -131,23 +135,48 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.15rem;
-    margin: 0.4rem 0 0 -0.6rem;
+    margin: 0.4rem 0 0 -0.7rem;
   }
 
   .marked {
-    color: var(--lake);
+    color: var(--accent);
   }
 
-  /* Compact (Heute): the only action sits beside the title as an icon button instead of its own row. */
+  /* Compact (Heute): a card on a shelf, actions as icon buttons at the bottom. */
+  /* position: relative keeps the hidden button labels inside the card, so a swiped-off card cannot widen the page. */
   .compact {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 0 0.5rem;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    min-height: 10.5rem;
+    padding: 1rem 1rem 0.5rem;
+    border: 0;
+    border-radius: var(--radius-m);
+    background: var(--surface);
+    scroll-snap-align: start;
+  }
+
+  .compact .title {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .compact .external {
+    display: none;
   }
 
   .compact .actions {
-    margin: 0 -0.6rem 0 0;
+    margin: auto -0.4rem 0 auto;
+  }
+
+  .compact .actions :global(.button) {
+    width: 2.75rem;
+    padding: 0;
+    justify-content: center;
   }
 
   .compact .actions span {

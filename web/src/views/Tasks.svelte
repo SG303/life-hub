@@ -116,7 +116,7 @@
 {#if error}<p class="notice error" role="alert">{error}</p>{/if}
 
 {#if tasks.length}
-  <ul class="list">
+  <ul class="sheet">
     {#each tasks as task (task.id)}
       <TaskItem {task} {today} {categories} onchange={load} />
     {/each}
@@ -131,11 +131,10 @@
   .composer {
     display: grid;
     gap: 0.75rem;
-    padding: 1rem;
+    padding: 1.1rem 1.25rem;
     margin-bottom: 1.5rem;
-    border: 1px solid var(--rule);
-    border-radius: var(--radius-m);
-    background: var(--sheet);
+    border-radius: var(--radius-l);
+    background: var(--surface);
   }
 
   .main-row {
@@ -171,12 +170,6 @@
     width: auto;
     min-height: 2.5rem;
     border-radius: 999px;
-  }
-
-  .list {
-    margin: 0;
-    padding: 0;
-    list-style: none;
   }
 
   @media (max-width: 520px) {

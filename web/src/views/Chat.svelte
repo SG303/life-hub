@@ -297,11 +297,11 @@
     width: 0.6rem;
     height: 0.6rem;
     border-radius: 50%;
-    background: var(--contour);
+    background: var(--warn);
   }
 
   .dot.up {
-    background: var(--forest);
+    background: var(--accent);
   }
 
   .layout {
@@ -330,7 +330,7 @@
   }
 
   .history li.current {
-    background: var(--lake-wash);
+    background: var(--accent-wash);
   }
 
   .history a {
@@ -377,8 +377,8 @@
     justify-self: end;
     padding: 0.6rem 0.9rem;
     border-radius: var(--radius-m) var(--radius-m) 4px var(--radius-m);
-    background: var(--lake);
-    color: var(--lake-ink);
+    background: var(--accent);
+    color: var(--accent-on);
   }
 
   .message.user p {
@@ -389,7 +389,7 @@
   .message.assistant {
     justify-self: start;
     padding: 0.1rem 0 0.1rem 0.9rem;
-    border-left: 3px solid var(--rule);
+    border-left: 3px solid var(--line);
   }
 
   .message.assistant :global(p) {
@@ -400,7 +400,7 @@
     overflow-x: auto;
     padding: 0.6rem;
     border-radius: var(--radius-s);
-    background: var(--sheet);
+    background: var(--surface);
   }
 
   .message-error p {
@@ -409,20 +409,19 @@
 
   .thinking {
     margin: 0;
-    color: var(--ink-soft);
+    color: var(--soft);
   }
 
   .composer {
     display: grid;
     gap: 0.5rem;
-    padding: 0.75rem;
-    border: 1px solid var(--rule);
-    border-radius: var(--radius-m);
-    background: var(--sheet);
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius-l);
+    background: var(--surface);
   }
 
   .context {
-    border-left: 3px solid var(--lake);
+    border-left: 3px solid var(--accent);
     padding-left: 0.75rem;
   }
 
@@ -440,7 +439,7 @@
     overflow: auto;
     font-family: var(--font);
     font-size: var(--step--1);
-    color: var(--ink-soft);
+    color: var(--soft);
     white-space: pre-wrap;
   }
 

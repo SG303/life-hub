@@ -48,7 +48,7 @@ export function watchForeignRequests(page: Page): string[] {
   return foreign;
 }
 
-/** Navigates via the main navigation (rail on desktop, tab bar on mobile). */
+/** Navigates via the main navigation (the floating dock). */
 export async function nav(page: Page, label: 'Heute' | 'Aufgaben' | 'Feeds' | 'Chat' | 'Quellen'): Promise<void> {
   await page.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link', { name: label, exact: true }).click();
   await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();

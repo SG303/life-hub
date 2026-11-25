@@ -22,42 +22,34 @@
 
 <a class="skip" href="#inhalt">Zum Inhalt springen</a>
 
-<div class="shell">
-  <nav class="rail" aria-label="Hauptnavigation">
-    <a class="brand" href="/" onclick={(e) => navigate(e, '/')}>
-      <img src="/icons/icon.svg" alt="" width="28" height="28" />
-      <span>Life Hub</span>
-    </a>
-    <ul>
-      {#each NAV as entry (entry.path)}
-        <li>
-          <a
-            href={entry.path}
-            aria-current={entry.path === current.path ? 'page' : undefined}
-            onclick={(e) => navigate(e, entry.path)}
-          >
-            <Icon name={entry.icon} size={22} />
-            <span>{entry.label}</span>
-          </a>
-        </li>
-      {/each}
-    </ul>
-  </nav>
+<main id="inhalt" tabindex="-1">
+  {#if current.path === '/'}
+    <Today />
+  {:else if current.path === '/aufgaben'}
+    <Tasks />
+  {:else if current.path === '/feeds'}
+    <Feeds />
+  {:else if current.path === '/chat'}
+    <Chat />
+  {:else if current.path === '/quellen'}
+    <Sources />
+  {/if}
+</main>
 
-  <main id="inhalt" tabindex="-1">
-    {#if current.path === '/'}
-      <Today />
-    {:else if current.path === '/aufgaben'}
-      <Tasks />
-    {:else if current.path === '/feeds'}
-      <Feeds />
-    {:else if current.path === '/chat'}
-      <Chat />
-    {:else if current.path === '/quellen'}
-      <Sources />
-    {/if}
-  </main>
-</div>
+<!-- Floating dock on every screen size; the agent (Chat) sits in the middle. -->
+<nav class="dock" aria-label="Hauptnavigation">
+  {#each NAV as entry (entry.path)}
+    <a
+      href={entry.path}
+      class:agent={entry.path === '/chat'}
+      aria-current={entry.path === current.path ? 'page' : undefined}
+      onclick={(e) => navigate(e, entry.path)}
+    >
+      <Icon name={entry.icon} size={entry.path === '/chat' ? 28 : 22} />
+      <span class:visually-hidden={entry.path === '/chat'}>{entry.label}</span>
+    </a>
+  {/each}
+</nav>
 
 <style>
   .skip {
@@ -66,8 +58,8 @@
     top: -3rem;
     z-index: 10;
     padding: 0.5rem 1rem;
-    background: var(--lake);
-    color: var(--lake-ink);
+    background: var(--accent);
+    color: var(--accent-on);
     border-radius: var(--radius-s);
   }
 
@@ -75,117 +67,75 @@
     top: 1rem;
   }
 
-  .shell {
-    min-height: 100dvh;
-  }
-
   main {
-    padding: 1.25rem 1rem calc(var(--tabbar) + 1.5rem + env(safe-area-inset-bottom, 0px));
-    max-width: 72rem;
+    max-width: 82rem;
     margin: 0 auto;
+    padding: 1rem 1rem calc(var(--dock-space) + env(safe-area-inset-bottom, 0px));
     outline: none;
   }
 
-  .rail {
+  .dock {
     position: fixed;
-    inset: auto 0 0 0;
+    left: 50%;
+    bottom: calc(0.85rem + env(safe-area-inset-bottom, 0px));
     z-index: 5;
-    height: calc(var(--tabbar) + env(safe-area-inset-bottom, 0px));
-    padding-bottom: env(safe-area-inset-bottom, 0px);
-    background: var(--sheet);
-    border-top: 1px solid var(--rule);
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+    padding: 0.35rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--dock);
+    box-shadow: var(--shadow);
+    transform: translateX(-50%);
+    backdrop-filter: blur(12px);
   }
 
-  .brand {
-    display: none;
-  }
-
-  ul {
-    display: grid;
-    grid-template-columns: repeat(5, 1fr);
-    height: 100%;
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-
-  li a {
+  .dock a {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 0.15rem;
-    height: 100%;
-    color: var(--ink-soft);
+    gap: 0.1rem;
+    width: 4.1rem;
+    height: 3.4rem;
+    border-radius: 999px;
+    color: var(--soft);
     font-size: 0.75rem;
     font-weight: 600;
     text-decoration: none;
   }
 
-  li a[aria-current='page'] {
-    color: var(--lake);
+  .dock a:hover {
+    color: var(--ink);
   }
 
-  li a[aria-current='page'] :global(svg) {
-    stroke-width: 2.4;
+  .dock a[aria-current='page'] {
+    color: var(--accent);
+    background: var(--accent-wash);
   }
 
-  @media (min-width: 900px) {
-    .shell {
-      display: grid;
-      grid-template-columns: var(--rail) 1fr;
-    }
+  .dock a.agent {
+    width: 3.6rem;
+    height: 3.6rem;
+    margin: 0 0.2rem;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--accent-on);
+  }
 
-    .rail {
-      position: sticky;
-      top: 0;
-      inset: auto;
-      height: 100dvh;
-      padding: 1.5rem 0.75rem;
-      border-top: 0;
-      border-right: 1px solid var(--rule);
-    }
+  .dock a.agent:hover {
+    filter: brightness(1.08);
+  }
 
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 0.6rem;
-      margin: 0 0.5rem 2rem;
-      color: var(--ink);
-      font-weight: 760;
-      font-stretch: 78%;
-      font-size: var(--step-1);
-      text-decoration: none;
-    }
+  .dock a.agent[aria-current='page'] {
+    box-shadow: 0 0 0 3px var(--accent-wash);
+  }
 
-    ul {
-      display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
-      height: auto;
-    }
-
-    li a {
-      flex-direction: row;
-      justify-content: flex-start;
-      gap: 0.75rem;
-      padding: 0.6rem 0.75rem;
-      border-radius: var(--radius-s);
-      font-size: var(--step-0);
-    }
-
-    li a:hover {
-      background: var(--lake-wash);
-      color: var(--ink);
-    }
-
-    li a[aria-current='page'] {
-      background: var(--lake-wash);
-    }
-
+  @media (min-width: 1000px) {
     main {
-      width: 100%;
-      padding: 2.5rem 2.5rem 3rem;
+      padding-inline: 2.5rem;
+      padding-top: 1.75rem;
     }
   }
 </style>

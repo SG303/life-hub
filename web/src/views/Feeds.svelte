@@ -119,7 +119,7 @@
 {#if error}<p class="notice error" role="alert">{error}</p>{/if}
 
 {#if items.length}
-  <ul class="list">
+  <ul class="sheet">
     {#each items as item (item.id)}
       <FeedEntry {item} onchange={updated} />
     {/each}
@@ -146,14 +146,8 @@
   .status {
     min-height: 1.5rem;
     margin: 0.25rem 0;
-    color: var(--ink-soft);
+    color: var(--soft);
     font-size: var(--step--1);
-  }
-
-  .list {
-    margin: 0;
-    padding: 0;
-    list-style: none;
   }
 
   .more {
