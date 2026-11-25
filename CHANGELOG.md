@@ -24,3 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With `MCP_EXPOSE_TASK_NOTES=false`, the MCP `search` tool no longer matches text that only appears in task notes.
 - Pruned feed items no longer come back as unread after 180 days: seen-item tombstones are now kept until the source is deleted.
 - Feed fetches now have a total deadline across all redirects, so one slow feed can no longer stall every refresh.
+- Feeds: "Weitere laden" no longer skips entries after marking items read or unbookmarking them under a filter, and a slow response can no longer overwrite the result of a newer filter.
+- Aufgaben: deleting a task now asks for confirmation, like deleting a source.
+- `compose.yaml` publishes the ports configured in `PORT`/`MCP_PORT`; `LIFE_HUB_BIND` and `MCP_BIND` are documented.

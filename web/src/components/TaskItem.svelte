@@ -13,6 +13,13 @@
   }: { task: Task; today: string; categories?: string[]; compact?: boolean; onchange: () => void } = $props();
 
   let editing = $state(false);
+  let confirmDelete = $state(false);
+  let cancelDelete = $state<HTMLButtonElement>();
+
+  // Keep keyboard focus inside the row when the trash button is swapped for the confirmation.
+  $effect(() => {
+    if (confirmDelete) cancelDelete?.focus();
+  });
   let error = $state('');
   let draft = $state({ title: '', note: '', dueDate: '', category: '' });
 
@@ -90,17 +97,23 @@
 
   {#if !editing}
     <div class="actions">
-      <button class="button quiet" type="button" onclick={() => askAgent('task', task.id)}>
-        <Icon name="agent" size={18} /><span>Agent fragen</span>
-      </button>
-      {#if !compact}
+      {#if confirmDelete}
+        <span class="confirm">Aufgabe löschen?</span>
+        <button class="button danger" type="button" onclick={() => run(() => api.deleteTask(task.id))}>Löschen</button>
+        <button class="button quiet" type="button" bind:this={cancelDelete} onclick={() => (confirmDelete = false)}>Abbrechen</button>
+      {:else}
+        <button class="button quiet" type="button" onclick={() => askAgent('task', task.id)}>
+          <Icon name="agent" size={18} /><span>Agent fragen</span>
+        </button>
+      {/if}
+      {#if !compact && !confirmDelete}
         <button class="button quiet" type="button" onclick={startEdit} aria-label="Bearbeiten: {task.title}">
           <Icon name="edit" size={18} />
         </button>
         <button
           class="button quiet danger"
           type="button"
-          onclick={() => run(() => api.deleteTask(task.id))}
+          onclick={() => (confirmDelete = true)}
           aria-label="Löschen: {task.title}"
         >
           <Icon name="trash" size={18} />
@@ -212,8 +225,16 @@
     grid-column: 2;
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: 0.25rem;
     margin-left: -0.6rem;
+  }
+
+  .confirm {
+    flex-basis: 100%;
+    margin-left: 0.6rem;
+    color: var(--ink-soft);
+    font-size: var(--step--1);
   }
 
   .edit {

@@ -43,7 +43,9 @@ test('creates, edits, filters, completes and deletes tasks; they survive a resta
   await expect(page.getByTestId('task').filter({ hasText: `Velo service ${tag}` })).toBeVisible();
 
   // Delete.
-  await page.getByTestId('task').filter({ hasText: `Velo service ${tag}` }).getByRole('button', { name: /^Löschen/ }).click();
+  const doomed = page.getByTestId('task').filter({ hasText: `Velo service ${tag}` });
+  await doomed.getByRole('button', { name: /^Löschen:/ }).click();
+  await doomed.getByRole('button', { name: 'Löschen', exact: true }).click();
   await expect(page.getByTestId('task').filter({ hasText: `Velo service ${tag}` })).toHaveCount(0);
 
   // Restart Life Hub (process or container) and check persistence.
