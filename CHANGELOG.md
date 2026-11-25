@@ -24,3 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With `MCP_EXPOSE_TASK_NOTES=false`, the MCP `search` tool no longer matches text that only appears in task notes.
 - Pruned feed items no longer come back as unread after 180 days: seen-item tombstones are now kept until the source is deleted.
 - Feed fetches now have a total deadline across all redirects, so one slow feed can no longer stall every refresh.
+- Chat: switching to another chat while the agent is still answering no longer shows the reply in the wrong chat or sends the next message to the wrong thread.
+- The `Host` header is now checked against `ALLOWED_HOSTS` as well as `X-Forwarded-Host`. Behind Docker port publishing every client arrives from the bridge, so a forged forwarded header could bypass the DNS-rebinding protection for reads.
+- Malformed `TRUSTED_PROXIES` entries (such as `10.0.0.1/`, which used to mean "trust everyone") now stop the startup with an error.
+- Heute: feed entries now offer **Agent fragen** like everywhere else.

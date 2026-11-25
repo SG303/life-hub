@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp, type App } from '../src/app.ts';
 import { openMemoryDatabase } from '../src/core/db.ts';
+import { ipMatcher } from '../src/core/security.ts';
 import { blockedAddressReason, FetchError, safeFetch } from '../src/modules/feeds/net.ts';
 import { htmlToText, safeHttpUrl } from '../src/modules/feeds/sanitize.ts';
 import { testConfig } from './helpers.ts';
@@ -122,6 +123,21 @@ describe('UI/API hardening', () => {
       headers: { Host: 'hub.example', 'X-Forwarded-Host': 'evil.example' },
     });
     expect(badHost.status).toBe(403);
+    // DNS rebinding through the proxy peer: with Docker port publishing every client arrives from
+    // the bridge gateway, so a forged X-Forwarded-Host must not make an unknown Host acceptable.
+    const rebound = await request(p, {
+      path: '/api/v1/tasks',
+      headers: { Host: 'evil.example:3000', 'X-Forwarded-Host': 'hub.tailnet.example' },
+    });
+    expect(rebound.status).toBe(403);
+  });
+
+  it('rejects malformed TRUSTED_PROXIES entries instead of trusting everyone', () => {
+    for (const entry of ['127.0.0.1/', '10.0.0.0/33', '10.0.0.0/x', '10.0.0.0/8/8', 'fd00::/129', 'not-an-ip']) {
+      expect(() => ipMatcher([entry]), entry).toThrow(/TRUSTED_PROXIES/);
+    }
+    const match = ipMatcher(['10.0.0.0/8', '192.0.2.10', 'fd00::/8']);
+    expect([match('10.1.2.3'), match('::ffff:192.0.2.10'), match('fd12::1'), match('8.8.8.8')]).toEqual([true, true, true, false]);
   });
 
   it('ignores forwarded headers from untrusted peers', async () => {

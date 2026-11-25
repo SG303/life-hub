@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import Icon from '../components/Icon.svelte';
   import { api, type ChatContext, type ChatMessage, type ChatThread } from '../lib/api';
   import { ago } from '../lib/format';
@@ -11,7 +12,9 @@
   let status = $state<{ configured: boolean; model: string | null; reachable: boolean | null } | undefined>();
   let context = $state<(ChatContext & { title: string; text: string }) | undefined>();
   let draft = $state('');
-  let sending = $state(false);
+  /** Threads with a turn in flight from this view, and whether a new thread is being created. */
+  let sendingIds = $state<number[]>([]);
+  let creating = $state(false);
   let error = $state('');
   let composer = $state<HTMLTextAreaElement>();
   let log = $state<HTMLElement>();
@@ -19,6 +22,7 @@
 
   const threadId = $derived(Number(router.params.get('thread')) || undefined);
   const contextParam = $derived(router.params.get('kontext'));
+  const sending = $derived(creating || (thread !== undefined && sendingIds.includes(thread.id)));
   const pending = $derived(sending || Boolean(thread?.pending));
 
   async function loadThreads() {
@@ -29,14 +33,17 @@
     }
   }
 
+  // The route is the authority for which thread is shown: results for a thread
+  // the user has left in the meantime are dropped.
   async function loadThread(id: number) {
     try {
       const state = await api.thread(id);
+      if (threadId !== id) return;
       thread = state.thread;
       messages = state.messages;
       error = '';
     } catch (e) {
-      error = (e as Error).message;
+      if (threadId === id) error = (e as Error).message;
     }
   }
 
@@ -47,8 +54,11 @@
 
   $effect(() => {
     const id = threadId;
-    if (id) void loadThread(id);
-    else {
+    if (id) {
+      // A thread just created by send() is already shown; its reply arrives with the send result.
+      if (untrack(() => sendingIds.includes(id) && thread?.id === id)) return;
+      void loadThread(id);
+    } else {
       thread = undefined;
       messages = [];
     }
@@ -87,47 +97,66 @@
     event?.preventDefault();
     const content = draft.trim();
     if (!content || pending) return;
-    sending = true;
+    creating = true;
     error = '';
     const ctx = context ? { type: context.type, id: context.id } : undefined;
+    let targetId: number | undefined;
+    let failure: Error | undefined;
     try {
       let target = thread;
       if (!target || ctx) {
         target = await api.createThread(ctx);
+        sendingIds = [...sendingIds, target.id];
         thread = target;
         messages = [];
         router.go(`/chat?thread=${target.id}`, { replace: true });
       }
+      targetId = target.id;
+      if (!sendingIds.includes(target.id)) sendingIds = [...sendingIds, target.id];
+      creating = false;
       const preview = context ? `${content}\n\n---\n${context.text}` : content;
       messages = [...messages, { id: -1, threadId: target.id, role: 'user', content: preview, createdAt: new Date().toISOString() }];
       draft = '';
       context = undefined;
       const state = await api.send(target.id, content, ctx);
-      thread = state.thread;
-      messages = state.messages;
+      if (threadId === target.id) {
+        thread = state.thread;
+        messages = state.messages;
+      }
     } catch (e) {
-      error = (e as Error).message;
-      if (thread) await loadThread(thread.id);
+      failure = e as Error;
     } finally {
-      sending = false;
+      creating = false;
+      sendingIds = sendingIds.filter((id) => id !== targetId);
       void loadThreads();
+    }
+    if (failure && (targetId === undefined || targetId === threadId)) {
+      error = failure.message;
+      if (targetId !== undefined) await loadThread(targetId);
     }
   }
 
   async function retry() {
     if (!thread) return;
-    sending = true;
+    const id = thread.id;
+    sendingIds = [...sendingIds, id];
     error = '';
     messages = messages.filter((message) => message.role !== 'error');
+    let failure: Error | undefined;
     try {
-      const state = await api.retry(thread.id);
-      thread = state.thread;
-      messages = state.messages;
+      const state = await api.retry(id);
+      if (threadId === id) {
+        thread = state.thread;
+        messages = state.messages;
+      }
     } catch (e) {
-      error = (e as Error).message;
-      await loadThread(thread.id);
+      failure = e as Error;
     } finally {
-      sending = false;
+      sendingIds = sendingIds.filter((other) => other !== id);
+    }
+    if (failure && threadId === id) {
+      error = failure.message;
+      await loadThread(id);
     }
   }
 

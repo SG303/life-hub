@@ -6,6 +6,7 @@ import { backupDatabase, openDatabase, type Db } from './core/db.js';
 import { handleApi, HttpError, parseJson, readBody, requestUrl, Router, sendJson } from './core/http.js';
 import { log } from './core/log.js';
 import {
+  hostnameOf,
   ipMatcher,
   isAllowedHost,
   isJsonContentType,
@@ -84,7 +85,10 @@ export function createApp(config: Config, overrides: AppOverrides = {}): App {
     void (async () => {
       setSecurityHeaders(res);
       const origin = requestOrigin(req, isTrustedProxy);
-      if (!isAllowedHost(origin.hostname, config.allowedHosts)) {
+      // Check the raw Host header too: behind Docker port publishing every client arrives from the
+      // bridge gateway, so X-Forwarded-Host alone must not make a DNS-rebound Host acceptable.
+      const rawHostname = hostnameOf((req.headers.host ?? '').toLowerCase());
+      if (!isAllowedHost(origin.hostname, config.allowedHosts) || !isAllowedHost(rawHostname, config.allowedHosts)) {
         res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
         res.end('Host nicht erlaubt (ALLOWED_HOSTS).');
         return;
