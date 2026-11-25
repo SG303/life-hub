@@ -1,16 +1,18 @@
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { createApp } from '../src/app.ts';
 import { backupDatabase, DB_FILE, openDatabase, openMemoryDatabase, restoreDatabase } from '../src/core/db.ts';
 import { migrations } from '../src/core/migrations.ts';
-import { AgentClient, ChatService } from '../src/modules/chat/index.ts';
+import { AgentClient, ChatService, type TurnEvent } from '../src/modules/chat/index.ts';
 import { TaskService } from '../src/modules/tasks/index.ts';
 import { tempDir, testConfig } from './helpers.ts';
 
 interface Call {
   url: string;
   headers: Record<string, string>;
-  body: { model: string; messages: { role: string; content: string }[] };
+  body: { model: string; messages: { role: string; content: string }[]; stream?: boolean };
 }
 
 function agentFetch(handler: (call: Call) => Response | Promise<Response>) {
@@ -29,6 +31,21 @@ function agentFetch(handler: (call: Call) => Response | Promise<Response>) {
 
 function reply(content: string): Response {
   return Response.json({ choices: [{ message: { role: 'assistant', content } }] });
+}
+
+function sseResponse(frames: string[]): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const frame of frames) controller.enqueue(encoder.encode(frame));
+      controller.close();
+    },
+  });
+  return new Response(stream, { headers: { 'Content-Type': 'text/event-stream; charset=utf-8' } });
+}
+
+function sseData(payload: unknown): string {
+  return `data: ${typeof payload === 'string' ? payload : JSON.stringify(payload)}\n\n`;
 }
 
 function setup(handler: (call: Call) => Response | Promise<Response>, env: Record<string, string> = {}) {
@@ -302,5 +319,263 @@ describe('OpenAI-compatible status', () => {
     expect(await agent.status()).toEqual({ configured: true, model: 'm1', reachable: true });
     expect(JSON.stringify(await agent.status())).not.toContain('k"');
     expect(ctx.calls).toHaveLength(0);
+  });
+});
+
+describe('SSE streaming and live tool trace', () => {
+  it('streams OpenAI SSE deltas and optional SSE tool calls, persisting tool trace without sending it in history', async () => {
+    const ctx = setup((call) => {
+      if (call.body.messages.length === 1) {
+        return sseResponse([
+          sseData({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_1', function: { name: 'web_search' } }] } }] }),
+          sseData({ choices: [{ delta: { content: 'Hallo ' } }] }),
+          sseData({ choices: [{ delta: { content: 'Welt!' } }] }),
+          sseData('[DONE]'),
+        ]);
+      }
+      return reply('Zweite Antwort');
+    });
+
+    const thread = ctx.chat.createThread();
+    const events: TurnEvent[] = [];
+    ctx.chat.startSend(thread.id, { content: 'Erste Frage' });
+    const unsub = ctx.chat.subscribe(thread.id, (ev) => events.push(ev));
+    await ctx.chat.idle();
+    unsub();
+
+    expect(ctx.calls[0]!.body.stream).toBe(true);
+    expect(events.map((e) => e.type)).toEqual(['snapshot', 'tool', 'delta', 'delta', 'done']);
+    const saved = ctx.chat.messages(thread.id).at(-1)!;
+    expect(saved.role).toBe('assistant');
+    expect(saved.content).toBe('Hallo Welt!');
+    expect(saved.toolTrace).toMatchObject([{ tool: 'web_search', label: 'Werkzeug: web_search', status: 'done', source: 'agent' }]);
+
+    // Tool trace must never be forwarded in upstream chat history.
+    await ctx.chat.send(thread.id, { content: 'Zweite Frage' });
+    expect(ctx.calls[1]!.body.messages).toEqual([
+      { role: 'user', content: 'Erste Frage' },
+      { role: 'assistant', content: 'Hallo Welt!' },
+      { role: 'user', content: 'Zweite Frage' },
+    ]);
+  });
+
+  it('falls back to stream: false when an agent rejects stream: true with HTTP 400', async () => {
+    const ctx = setup((call) => {
+      if (call.body.stream) return new Response('streaming unsupported', { status: 400 });
+      return reply('Fallback-Antwort');
+    });
+    const thread = ctx.chat.createThread();
+    await ctx.chat.send(thread.id, { content: 'Hallo' });
+    expect(ctx.calls.map((c) => c.body.stream)).toEqual([true, false]);
+    expect(ctx.chat.messages(thread.id).at(-1)?.content).toBe('Fallback-Antwort');
+  });
+
+  it('attributes live MCP tool calls to a single active turn and omits attribution during concurrent turns', async () => {
+    let releaseSingle!: () => void;
+    const singleGate = new Promise<void>((resolve) => (releaseSingle = resolve));
+    let releaseA!: () => void;
+    let releaseB!: () => void;
+    const gateA = new Promise<void>((resolve) => (releaseA = resolve));
+    const gateB = new Promise<void>((resolve) => (releaseB = resolve));
+
+    let phase: 'single' | 'concurrent' = 'single';
+    let concurrentCount = 0;
+    const ctx = setup(async () => {
+      if (phase === 'single') {
+        await singleGate;
+        return reply('Einzelantwort');
+      }
+      const idx = ++concurrentCount;
+      await (idx === 1 ? gateA : gateB);
+      return reply(`Antwort ${idx}`);
+    });
+
+    // Single active turn: MCP tool steps are live-emitted and persisted.
+    const t1 = ctx.chat.createThread();
+    ctx.chat.startSend(t1.id, { content: 'Solo' });
+    const seen: TurnEvent[] = [];
+    ctx.chat.subscribe(t1.id, (ev) => seen.push(ev));
+    ctx.chat.recordMcpTool({ id: 'm1', tool: 'list_tasks', label: 'Offene Aufgaben lesen …', status: 'running' });
+    ctx.chat.recordMcpTool({ id: 'm1', tool: 'list_tasks', label: 'Offene Aufgaben gelesen (3)', status: 'done' });
+    releaseSingle();
+    await ctx.chat.idle();
+    expect(seen.filter((e) => e.type === 'tool')).toHaveLength(2);
+    expect(ctx.chat.messages(t1.id).at(-1)?.toolTrace).toEqual([
+      { id: 'm1', tool: 'list_tasks', label: 'Offene Aufgaben gelesen (3)', status: 'done', source: 'mcp' },
+    ]);
+
+    // Two concurrent turns: MCP tool call is not attributed to either thread.
+    phase = 'concurrent';
+    const tA = ctx.chat.createThread();
+    const tB = ctx.chat.createThread();
+    ctx.chat.startSend(tA.id, { content: 'A' });
+    ctx.chat.startSend(tB.id, { content: 'B' });
+    ctx.chat.recordMcpTool({ id: 'm2', tool: 'search', label: 'Suche nach «Test» (1 Treffer)', status: 'done' });
+    releaseA();
+    releaseB();
+    await ctx.chat.idle();
+    expect(ctx.chat.messages(tA.id).at(-1)?.toolTrace).toEqual([]);
+    expect(ctx.chat.messages(tB.id).at(-1)?.toolTrace).toEqual([]);
+  });
+
+  it('replays buffered text and tool steps on reconnect and delivers done immediately once settled', async () => {
+    const encoder = new TextEncoder();
+    let push!: (chunk: string) => void;
+    let close!: () => void;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        push = (chunk) => controller.enqueue(encoder.encode(chunk));
+        close = () => controller.close();
+      },
+    });
+    const ctx = setup(() => new Response(body, { headers: { 'Content-Type': 'text/event-stream' } }));
+    const thread = ctx.chat.createThread();
+    ctx.chat.startSend(thread.id, { content: 'Reconnect?' });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    ctx.chat.recordMcpTool({ id: 'm-rec', tool: 'list_tasks', label: 'Offene Aufgaben gelesen (2)', status: 'done' });
+    push(sseData({ choices: [{ delta: { content: 'Teil 1 ' } }] }));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // Late subscriber (simulating reload) gets snapshot immediately, then remaining deltas and done.
+    const late: TurnEvent[] = [];
+    ctx.chat.subscribe(thread.id, (ev) => late.push(ev));
+    expect(late[0]).toEqual({
+      type: 'snapshot',
+      text: 'Teil 1 ',
+      steps: [{ id: 'm-rec', tool: 'list_tasks', label: 'Offene Aufgaben gelesen (2)', status: 'done', source: 'mcp' }],
+    });
+
+    push(sseData({ choices: [{ delta: { content: 'Teil 2' } }] }));
+    push(sseData('[DONE]'));
+    close();
+    await ctx.chat.idle();
+
+    expect(late.map((e) => e.type)).toEqual(['snapshot', 'delta', 'done']);
+    expect(ctx.chat.messages(thread.id).at(-1)?.content).toBe('Teil 1 Teil 2');
+
+    // Subscribing after completion emits `done` right away.
+    const after: TurnEvent[] = [];
+    ctx.chat.subscribe(thread.id, (ev) => after.push(ev));
+    expect(after).toHaveLength(1);
+    expect(after[0]!.type).toBe('done');
+  });
+
+  it('discards partial text on mid-stream disconnect or timeout and recovers cleanly via retry', async () => {
+    const encoder = new TextEncoder();
+    let attempt = 0;
+    const ctx = setup(
+      (_call) => {
+        attempt++;
+        if (attempt === 1) {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(encoder.encode(sseData({ choices: [{ delta: { content: 'Unvollständig ...' } }] })));
+              setTimeout(() => controller.error(new TypeError('socket hang up')), 10);
+            },
+          });
+          return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+        }
+        if (attempt === 2) {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(encoder.encode(sseData({ choices: [{ delta: { content: 'Hängt ...' } }] })));
+            },
+          });
+          return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+        }
+        return sseResponse([sseData({ choices: [{ delta: { content: 'Komplett!' } }] }), sseData('[DONE]')]);
+      },
+      { AGENT_TIMEOUT_MS: '60' },
+    );
+
+    const thread = ctx.chat.createThread();
+    await ctx.chat.send(thread.id, { content: 'Test' });
+    expect(ctx.chat.messages(thread.id).map((m) => [m.role, m.content])).toEqual([
+      ['user', 'Test'],
+      ['error', 'Der Agent ist nicht erreichbar.'],
+    ]);
+
+    await ctx.chat.retry(thread.id);
+    expect(ctx.chat.messages(thread.id).map((m) => [m.role, m.content])).toEqual([
+      ['user', 'Test'],
+      ['error', 'Der Agent hat nicht rechtzeitig geantwortet.'],
+    ]);
+
+    await ctx.chat.retry(thread.id);
+    expect(ctx.chat.messages(thread.id).map((m) => [m.role, m.content])).toEqual([
+      ['user', 'Test'],
+      ['assistant', 'Komplett!'],
+    ]);
+  });
+
+  it('streams SSE over /api/v1/chat/threads/:id/stream with proxy anti-buffering headers', async () => {
+    const encoder = new TextEncoder();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const config = testConfig({
+      ALLOWED_HOSTS: 'localhost',
+      AGENT_BASE_URL: 'http://agent.example/v1',
+      AGENT_MODEL: 'm-sse',
+    });
+    const app = createApp(config, {
+      db: openMemoryDatabase(),
+      agentFetch: (async () => {
+        const stream = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            controller.enqueue(encoder.encode(sseData({ choices: [{ delta: { content: 'Live ' } }] })));
+            await gate;
+            controller.enqueue(encoder.encode(sseData({ choices: [{ delta: { content: 'Stream' } }] })));
+            controller.enqueue(encoder.encode(sseData('[DONE]')));
+            controller.close();
+          },
+        });
+        return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+      }) as typeof fetch,
+    });
+    await app.start();
+    const port = (app.uiServer.address() as { port: number }).port;
+    const base = `http://127.0.0.1:${port}`;
+    try {
+      const created = (await (
+        await fetch(`${base}/api/v1/chat/threads`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Origin: base },
+          body: '{}',
+        })
+      ).json()) as { id: number };
+      const started = await fetch(`${base}/api/v1/chat/threads/${created.id}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: base },
+        body: JSON.stringify({ content: 'Ping', async: true }),
+      });
+      expect(started.status).toBe(202);
+
+      const sse = await new Promise<{ headers: http.IncomingHttpHeaders; body: string }>((resolve, reject) => {
+        const req = http.get(`${base}/api/v1/chat/threads/${created.id}/stream`, (res) => {
+          let body = '';
+          res.setEncoding('utf8');
+          res.on('data', (chunk: string) => {
+            body += chunk;
+            if (body.includes('Live ')) {
+              app.chat.service.recordMcpTool({ id: 'live-1', tool: 'list_tasks', label: 'Offene Aufgaben gelesen (1)', status: 'done' });
+              release();
+            }
+          });
+          res.on('end', () => resolve({ headers: res.headers, body }));
+        });
+        req.on('error', reject);
+      });
+
+      expect(sse.headers['content-type']).toContain('text/event-stream');
+      expect(sse.headers['x-accel-buffering']).toBe('no');
+      expect(sse.body).toContain('event: tool');
+      expect(sse.body).toContain('Offene Aufgaben gelesen (1)');
+      expect(sse.body).toContain('event: delta');
+      expect(sse.body).toContain('event: done');
+      expect(sse.body).toContain('Live Stream');
+    } finally {
+      await app.stop();
+    }
   });
 });

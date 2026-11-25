@@ -135,6 +135,7 @@ export function createApp(config: Config, overrides: AppOverrides = {}): App {
       allowedOrigins: config.mcpAllowedOrigins,
       exposeTaskNotes: config.mcpExposeTaskNotes,
       version,
+      onToolCall: (event) => chat.service.recordMcpTool(event),
     })(req, res).catch((error: unknown) => failRequest(res, error));
   });
 

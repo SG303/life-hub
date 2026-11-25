@@ -9,8 +9,12 @@ export async function fixturesForApp(): Promise<string> {
   return info.fixturesForApp;
 }
 
-export async function control(path: string): Promise<unknown> {
-  const res = await fetch(`${CONTROL}${path}`, { method: path.endsWith('turns') ? 'GET' : 'POST' });
+export async function control(path: string, body?: unknown): Promise<unknown> {
+  const res = await fetch(`${CONTROL}${path}`, {
+    method: path.endsWith('turns') ? 'GET' : 'POST',
+    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
   if (!res.ok) throw new Error(`control ${path}: ${res.status}`);
   return res.json();
 }

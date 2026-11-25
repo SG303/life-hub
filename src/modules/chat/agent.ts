@@ -34,6 +34,30 @@ export class AgentError extends Error {
 
 export type FetchLike = typeof fetch;
 
+export interface AgentStreamCallbacks {
+  onDelta: (text: string) => void;
+  onTool?: (name: string) => void;
+}
+
+interface SseChunk {
+  error?: unknown;
+  choices?: {
+    delta?: {
+      content?: unknown;
+      tool_calls?: { index?: number; id?: string; function?: { name?: unknown } }[];
+    };
+    message?: { content?: unknown };
+  }[];
+}
+
+const STREAM_FALLBACK_STATUSES = new Set([400, 422, 501]);
+
+function isAbortLike(error: unknown, signal: AbortSignal): boolean {
+  if (signal.aborted) return true;
+  const name = (error as Error | undefined)?.name;
+  return name === 'TimeoutError' || name === 'AbortError';
+}
+
 /**
  * Thin client for any OpenAI-compatible `/chat/completions` endpoint.
  * `AGENT_BASE_URL` includes the API prefix, e.g. `http://agent.example:8642/v1`.
@@ -56,42 +80,157 @@ export class AgentClient {
     return this.config.model ?? null;
   }
 
-  private headers(): Record<string, string> {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'application/json' };
+  private headers(accept = 'application/json'): Record<string, string> {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: accept };
     if (this.config.apiKey) headers.Authorization = `Bearer ${this.config.apiKey}`;
     return headers;
   }
 
-  async complete(messages: AgentMessage[]): Promise<string> {
-    if (!this.configured) throw new AgentError('not_configured');
-    let response: Response;
+  private async postCompletion(messages: AgentMessage[], stream: boolean, signal: AbortSignal): Promise<Response> {
     try {
-      response = await this.fetchImpl(`${this.config.baseUrl}/chat/completions`, {
+      return await this.fetchImpl(`${this.config.baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: this.headers(),
-        body: JSON.stringify({ model: this.config.model, messages, stream: false }),
-        signal: AbortSignal.timeout(this.config.timeoutMs),
+        headers: this.headers(stream ? 'text/event-stream, application/json' : 'application/json'),
+        body: JSON.stringify({ model: this.config.model, messages, stream }),
+        signal,
         redirect: 'error',
       });
     } catch (error) {
-      const name = (error as Error).name;
-      throw new AgentError(name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'unreachable');
+      throw new AgentError(isAbortLike(error, signal) ? 'timeout' : 'unreachable');
     }
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new AgentError('http', response.status);
-    }
+  }
+
+  private async parseJsonCompletion(response: Response, signal: AbortSignal, callbacks: AgentStreamCallbacks): Promise<string> {
     let data: unknown;
     try {
       data = await response.json();
     } catch (error) {
-      if ((error as Error).name === 'TimeoutError') throw new AgentError('timeout');
+      if (isAbortLike(error, signal)) throw new AgentError('timeout');
       throw new AgentError('invalid');
     }
-    const content = (data as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message?.content;
+    const content = (data as SseChunk)?.choices?.[0]?.message?.content;
     if (typeof content !== 'string' || content.trim() === '') throw new AgentError('invalid');
+    callbacks.onDelta(content);
     this.statusCache = { at: Date.now(), reachable: true };
     return content;
+  }
+
+  private async readSseCompletion(response: Response, signal: AbortSignal, callbacks: AgentStreamCallbacks): Promise<string> {
+    const body = response.body;
+    if (!body) throw new AgentError('invalid');
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    const seenTools = new Set<string>();
+    let buffer = '';
+    let content = '';
+    let done = false;
+
+    const handlePayload = (raw: string) => {
+      const payload = raw.trim();
+      if (!payload) return;
+      if (payload === '[DONE]') {
+        done = true;
+        return;
+      }
+      let chunk: SseChunk;
+      try {
+        chunk = JSON.parse(payload) as SseChunk;
+      } catch {
+        return;
+      }
+      if (chunk.error) throw new AgentError('http', 502);
+      const choice = chunk.choices?.[0];
+      const toolCalls = choice?.delta?.tool_calls;
+      if (Array.isArray(toolCalls)) {
+        for (const call of toolCalls) {
+          const name = typeof call?.function?.name === 'string' ? call.function.name.trim() : '';
+          if (!name) continue;
+          const key = call.id ?? (call.index !== undefined ? `idx:${call.index}:${name}` : name);
+          if (!seenTools.has(key)) {
+            seenTools.add(key);
+            callbacks.onTool?.(name);
+          }
+        }
+      }
+      const delta = choice?.delta?.content ?? choice?.message?.content;
+      if (typeof delta === 'string' && delta.length > 0) {
+        content += delta;
+        callbacks.onDelta(delta);
+      }
+    };
+
+    const drainLines = (flush: boolean) => {
+      const lines = buffer.split(/\r?\n/);
+      buffer = flush ? '' : (lines.pop() ?? '');
+      for (const line of lines) {
+        if (done) return;
+        if (!line.startsWith('data:')) continue;
+        handlePayload(line.slice(5));
+      }
+    };
+
+    const onAbort = () => {
+      void reader.cancel().catch(() => {});
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+
+    try {
+      if (signal.aborted) throw new AgentError('timeout');
+      while (!done) {
+        const { value, done: eof } = await reader.read();
+        if (signal.aborted) throw new AgentError('timeout');
+        if (eof) break;
+        buffer += decoder.decode(value, { stream: true });
+        drainLines(false);
+      }
+      if (!done) {
+        buffer += decoder.decode();
+        drainLines(true);
+      }
+    } catch (error) {
+      await reader.cancel().catch(() => {});
+      if (error instanceof AgentError) throw error;
+      throw new AgentError(isAbortLike(error, signal) ? 'timeout' : 'unreachable');
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+    }
+
+    if (done) await reader.cancel().catch(() => {});
+    if (content.trim() === '') throw new AgentError('invalid');
+    this.statusCache = { at: Date.now(), reachable: true };
+    return content;
+  }
+
+  /**
+   * Streams a completion over SSE, falling back automatically when the
+   * configured agent ignores or rejects `stream: true`.
+   */
+  async stream(messages: AgentMessage[], callbacks: AgentStreamCallbacks): Promise<string> {
+    if (!this.configured) throw new AgentError('not_configured');
+    const signal = AbortSignal.timeout(this.config.timeoutMs);
+    let response = await this.postCompletion(messages, true, signal);
+    if (!response.ok) {
+      const status = response.status;
+      await response.body?.cancel();
+      if (STREAM_FALLBACK_STATUSES.has(status)) {
+        response = await this.postCompletion(messages, false, signal);
+        if (!response.ok) {
+          await response.body?.cancel();
+          throw new AgentError('http', response.status);
+        }
+      } else {
+        throw new AgentError('http', status);
+      }
+    }
+    const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+    if (contentType.includes('text/event-stream')) {
+      return this.readSseCompletion(response, signal, callbacks);
+    }
+    return this.parseJsonCompletion(response, signal, callbacks);
+  }
+
+  async complete(messages: AgentMessage[]): Promise<string> {
+    return this.stream(messages, { onDelta: () => {} });
   }
 
   /** Non-secret status for the UI: configured model and whether `/models` answers. Cached for 30 s. */

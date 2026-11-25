@@ -50,6 +50,13 @@ async function readMcp(options: MockAgentOptions): Promise<RecordedTurn['mcp']> 
   }
 }
 
+export interface MockAgentMode {
+  /** `sse` streams OpenAI deltas, `json` ignores `stream: true` (fallback test), `fail-mid-stream` drops after chunk 1. */
+  mode: 'sse' | 'json' | 'fail-mid-stream';
+  /** When true in `sse` mode, pauses after the first streamed chunk until `release()` is called. */
+  hold: boolean;
+}
+
 /**
  * OpenAI-compatible mock (`/v1/models`, `/v1/chat/completions`). Each turn reads
  * live data from Life Hub's MCP endpoint and answers with Markdown that contains
@@ -57,6 +64,23 @@ async function readMcp(options: MockAgentOptions): Promise<RecordedTurn['mcp']> 
  */
 export function createMockAgent(options: MockAgentOptions) {
   const turns: RecordedTurn[] = [];
+  let config: MockAgentMode = { mode: 'sse', hold: false };
+  let waiters: (() => void)[] = [];
+
+  const release = () => {
+    const pending = waiters;
+    waiters = [];
+    for (const resolve of pending) resolve();
+  };
+
+  const setMode = (patch: Partial<MockAgentMode>) => {
+    config = { ...config, ...patch };
+    if (!config.hold) release();
+  };
+
+  const waitIfHeld = () =>
+    config.hold ? new Promise<void>((resolve) => waiters.push(resolve)) : Promise.resolve();
+
   const server = http.createServer((req, res) => {
     void (async () => {
       const url = new URL(req.url ?? '/', 'http://agent.invalid');
@@ -71,7 +95,7 @@ export function createMockAgent(options: MockAgentOptions) {
 
       let body = '';
       for await (const chunk of req) body += chunk;
-      const request = JSON.parse(body) as { model: string; messages: { role: string; content: string }[] };
+      const request = JSON.parse(body) as { model: string; messages: { role: string; content: string }[]; stream?: boolean };
       const mcp = await readMcp(options);
       turns.push({ authorization: req.headers.authorization, model: request.model, messages: request.messages, mcp });
       const last = request.messages.at(-1)?.content ?? '';
@@ -79,14 +103,47 @@ export function createMockAgent(options: MockAgentOptions) {
         'error' in mcp
           ? `MCP-Fehler: ${mcp.error}`
           : `Ich habe über MCP ${mcp.openTasks.length} offene Aufgaben gelesen: ${mcp.openTasks.slice(0, 5).join(', ') || 'keine'}.`;
-      const content = `**Antwort vom Test-Agenten.** ${summary}\n\nDeine Nachricht beginnt mit: «${last.slice(0, 60)}»\n\n${AGENT_PAYLOADS}`;
-      json(200, {
-        id: `chatcmpl-${turns.length}`,
-        object: 'chat.completion',
-        model: request.model,
-        choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content } }],
+      const parts = [
+        `**Antwort vom Test-Agenten.** ${summary}\n\n`,
+        `Deine Nachricht beginnt mit: «${last.slice(0, 60)}»\n\n`,
+        AGENT_PAYLOADS,
+      ];
+      const content = parts.join('');
+      const id = `chatcmpl-${turns.length}`;
+
+      if (!request.stream || config.mode === 'json') {
+        return json(200, {
+          id,
+          object: 'chat.completion',
+          model: request.model,
+          choices: [{ index: 0, finish_reason: 'stop', message: { role: 'assistant', content } }],
+        });
+      }
+
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
       });
+      res.flushHeaders();
+      const sendChunk = (delta: Record<string, unknown>, finishReason: string | null = null) => {
+        res.write(
+          `data: ${JSON.stringify({ id, object: 'chat.completion.chunk', model: request.model, choices: [{ index: 0, delta, finish_reason: finishReason }] })}\n\n`,
+        );
+      };
+
+      sendChunk({ role: 'assistant', content: parts[0] });
+      if (config.mode === 'fail-mid-stream') {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        res.destroy();
+        return;
+      }
+      await waitIfHeld();
+      sendChunk({ content: parts[1] });
+      sendChunk({ content: parts[2] }, 'stop');
+      res.write('data: [DONE]\n\n');
+      res.end();
     })();
   });
-  return { server, turns };
+  return { server, turns, setMode, release };
 }

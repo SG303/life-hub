@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-25
+
+### Added
+
+- Real-time SSE chat streaming: replies from the external agent now stream incrementally into the chat view (with automatic fallback for non-streaming agents), keep running on the server across reloads or chat switches with seamless reconnect, and pause auto-scroll when scrolling up manually.
+- Live and persisted MCP tool trace: while the agent works, Life Hub shows concise German summaries of its MCP reads (plus optional OpenAI SSE tool-call events) and saves the trace collapsed on the completed reply.
+- `GET /api/v1/chat/threads/:id/stream` (SSE) and optional `async: true` mode on `POST /api/v1/chat/threads/:id/messages` and `/retry`.
+
 ## [0.4.0] - 2026-11-25
 
 ### Added
@@ -76,7 +84,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SSRF protection checks the IPv4 address inside NAT64 addresses (`64:ff9b::/96`) and blocks the local-use NAT64 range.
 - OPML import skips feed URLs that contain a user name or password.
 
-[Unreleased]: https://github.com/SG303/life-hub/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/SG303/life-hub/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/SG303/life-hub/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/SG303/life-hub/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/SG303/life-hub/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/SG303/life-hub/compare/v0.1.0...v0.2.0

@@ -3,7 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { openMemoryDatabase } from '../src/core/db.ts';
-import { createMcpHandler, tokenMatches } from '../src/mcp/server.ts';
+import { createMcpHandler, tokenMatches, type McpToolEvent } from '../src/mcp/server.ts';
 import { FeedService } from '../src/modules/feeds/index.ts';
 import { TaskService } from '../src/modules/tasks/index.ts';
 import { newsRss } from './fixtures/feeds.ts';
@@ -11,8 +11,22 @@ import { fakeFetcher, testConfig } from './helpers.ts';
 
 const TOKEN = 'mcp-test-token-0123456789abcdefghij';
 
-async function startMcp(token: string | undefined, tasks: TaskService, feeds: FeedService, exposeTaskNotes = true) {
-  const handler = createMcpHandler({ tasks, feeds, token, allowedOrigins: ['https://agent.example'], exposeTaskNotes, version: 'test' });
+async function startMcp(
+  token: string | undefined,
+  tasks: TaskService,
+  feeds: FeedService,
+  exposeTaskNotes = true,
+  onToolCall?: (event: McpToolEvent) => void,
+) {
+  const handler = createMcpHandler({
+    tasks,
+    feeds,
+    token,
+    allowedOrigins: ['https://agent.example'],
+    exposeTaskNotes,
+    version: 'test',
+    onToolCall,
+  });
   const server = http.createServer((req, res) => void handler(req, res));
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${(server.address() as { port: number }).port}/mcp`;
@@ -154,5 +168,26 @@ describe('MCP endpoint', () => {
   it('rejects GET (stateless, POST only)', async () => {
     const res = await fetch(url, { headers: { Authorization: `Bearer ${TOKEN}`, Accept: 'text/event-stream' } });
     expect(res.status).toBe(405);
+  });
+
+  it('emits German tool-trace events without leaking hidden task notes', async () => {
+    const events: McpToolEvent[] = [];
+    const { server: s, url: u } = await startMcp(TOKEN, tasks, feeds, false, (ev) => events.push(ev));
+    const client = await connect(u);
+    await client.callTool({ name: 'list_tasks', arguments: { limit: 5 } });
+    await client.callTool({ name: 'get_task', arguments: { id: 26 } });
+    await client.callTool({ name: 'get_task', arguments: { id: 999 } });
+    await client.callTool({ name: 'search', arguments: { query: 'Velo' } });
+    await client.close();
+    s.close();
+
+    const completed = events.filter((e) => e.status !== 'running');
+    expect(completed.map((e) => [e.tool, e.status, e.label])).toEqual([
+      ['list_tasks', 'done', 'Offene Aufgaben gelesen (5)'],
+      ['get_task', 'done', 'Aufgabe «Velo flicken» gelesen'],
+      ['get_task', 'error', 'Aufgabe #999 nicht gefunden'],
+      ['search', 'done', 'Suche nach «Velo» (1 Treffer)'],
+    ]);
+    expect(JSON.stringify(events)).not.toContain('Schlauch kaufen');
   });
 });

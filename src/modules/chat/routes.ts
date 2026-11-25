@@ -1,4 +1,4 @@
-import { HttpError, Router, input, reply } from '../../core/http.js';
+import { HttpError, Router, input, reply, streamReply } from '../../core/http.js';
 import type { AgentClient } from './agent.js';
 import { CHAT_LIMITS, type ChatService, type ContextType, type ThreadPatch } from './service.js';
 
@@ -41,17 +41,58 @@ export function chatRoutes(chat: ChatService, agent: AgentClient): Router {
       chat.deleteThread(input.id(params.id));
       return reply(204);
     })
+    .get('/threads/:id/stream', ({ params }) => {
+      const id = input.id(params.id);
+      chat.requireThread(id);
+      return streamReply((req, res) => {
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        });
+        res.flushHeaders();
+        let closed = false;
+        let unsubscribe = () => {};
+        const keepalive = setInterval(() => {
+          if (!res.writableEnded && !res.destroyed) res.write(': keepalive\n\n');
+        }, 15_000);
+        keepalive.unref();
+        const finish = () => {
+          if (closed) return;
+          closed = true;
+          clearInterval(keepalive);
+          unsubscribe();
+          if (!res.writableEnded) res.end();
+        };
+        req.on('close', finish);
+        unsubscribe = chat.subscribe(id, (event) => {
+          if (!res.writableEnded && !res.destroyed) {
+            res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+          }
+          if (event.type === 'done') finish();
+        });
+      });
+    })
     .post('/threads/:id/messages', async ({ params, body }) => {
       const id = input.id(params.id);
       const data = input.object(body);
-      await chat.send(id, {
+      const payload = {
         content: input.string(data.content, 'Nachricht', CHAT_LIMITS.message, true)!,
         context: context(data.context),
-      });
+      };
+      if (input.boolean(data.async, 'Asynchron')) {
+        return reply(202, chat.startSend(id, payload));
+      }
+      await chat.send(id, payload);
       return threadState(id);
     })
-    .post('/threads/:id/retry', async ({ params }) => {
+    .post('/threads/:id/retry', async ({ params, body }) => {
       const id = input.id(params.id);
+      const data = body ? input.object(body) : {};
+      if (input.boolean(data.async, 'Asynchron')) {
+        return reply(202, chat.startRetry(id));
+      }
       await chat.retry(id);
       return threadState(id);
     });

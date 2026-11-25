@@ -3,7 +3,7 @@
   import Icon from '../components/Icon.svelte';
   import Sheet from '../components/Sheet.svelte';
   import ThreadMenu from '../components/ThreadMenu.svelte';
-  import { api, type ChatContext, type ChatMessage, type ChatThread } from '../lib/api';
+  import { api, type ChatContext, type ChatMessage, type ChatThread, type ToolTraceStep } from '../lib/api';
   import { ago } from '../lib/format';
   import { renderMarkdown } from '../lib/markdown';
   import { router } from '../lib/router.svelte';
@@ -28,6 +28,9 @@
   let showSnoozed = $state(false);
   let showSettled = $state(false);
   let settledShown = $state(SETTLED_PAGE);
+  let liveText = $state('');
+  let liveSteps = $state<ToolTraceStep[]>([]);
+  let autoScroll = $state(true);
 
   const threadId = $derived(Number(router.params.get('thread')) || undefined);
   const contextParam = $derived(router.params.get('kontext'));
@@ -43,6 +46,7 @@
   const settled = $derived(threads.filter((t) => t.state === 'settled').sort((a, b) => byNewest(a.settledAt, b.settledAt)));
   const sending = $derived(creating || (thread !== undefined && sendingIds.includes(thread.id)));
   const pending = $derived(sending || Boolean(thread?.pending));
+  const streamingId = $derived(thread?.pending ? thread.id : undefined);
 
   async function loadThreads() {
     try {
@@ -77,6 +81,7 @@
 
   $effect(() => {
     const id = threadId;
+    autoScroll = true;
     if (id) {
       // A thread just created by send() is already shown; its reply arrives with the send result.
       if (untrack(() => sendingIds.includes(id) && thread?.id === id)) return;
@@ -107,18 +112,64 @@
     if (router.params.has('neu') && composer) untrack(() => composer!.focus());
   });
 
-  // While a reply is pending on the server (e.g. after a reload), poll until it arrives.
+  // While a turn is pending on the server (fresh send, retry, reload or returning
+  // from another chat), subscribe to its live SSE stream for tokens and tool steps.
   $effect(() => {
-    if (!thread?.pending || sending) return;
-    const id = thread.id;
-    const timer = setInterval(() => void loadThread(id), 2000);
-    return () => clearInterval(timer);
+    const id = streamingId;
+    if (!id) {
+      liveText = '';
+      liveSteps = [];
+      return;
+    }
+    liveText = '';
+    liveSteps = [];
+    const stop = api.streamThread(id, {
+      onSnapshot(text, steps) {
+        if (threadId !== id) return;
+        liveText = text;
+        liveSteps = steps;
+      },
+      onDelta(chunk) {
+        if (threadId !== id) return;
+        liveText += chunk;
+      },
+      onTool(step) {
+        if (threadId !== id) return;
+        const idx = liveSteps.findIndex((existing) => existing.id === step.id);
+        if (idx >= 0) liveSteps = liveSteps.map((existing, i) => (i === idx ? step : existing));
+        else liveSteps = [...liveSteps, step];
+      },
+      onDone(state) {
+        stop();
+        if (threadId === id) {
+          thread = state.thread;
+          messages = state.messages;
+          liveText = '';
+          liveSteps = [];
+        }
+        void loadThreads();
+      },
+      onDisconnect() {
+        stop();
+        if (threadId === id) void loadThread(id);
+      },
+    });
+    return () => {
+      stop();
+    };
   });
+
+  function onLogScroll() {
+    if (!log) return;
+    autoScroll = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
+  }
 
   $effect(() => {
     void messages.length;
+    void liveText;
+    void liveSteps.length;
     void pending;
-    log?.scrollTo({ top: log.scrollHeight });
+    if (autoScroll && log) log.scrollTop = log.scrollHeight;
   });
 
   async function send(event?: SubmitEvent) {
@@ -126,6 +177,7 @@
     const content = draft.trim();
     if (!content || pending) return;
     creating = true;
+    autoScroll = true;
     error = '';
     const ctx = context ? { type: context.type, id: context.id } : undefined;
     let targetId: number | undefined;
@@ -143,10 +195,13 @@
       if (!sendingIds.includes(target.id)) sendingIds = [...sendingIds, target.id];
       creating = false;
       const preview = context ? `${content}\n\n---\n${context.text}` : content;
-      messages = [...messages, { id: -1, threadId: target.id, role: 'user', content: preview, createdAt: new Date().toISOString() }];
+      messages = [
+        ...messages,
+        { id: -1, threadId: target.id, role: 'user', content: preview, toolTrace: [], createdAt: new Date().toISOString() },
+      ];
       draft = '';
       context = undefined;
-      const state = await api.send(target.id, content, ctx);
+      const state = await api.startSend(target.id, content, ctx);
       if (threadId === target.id) {
         thread = state.thread;
         messages = state.messages;
@@ -168,11 +223,12 @@
     if (!thread) return;
     const id = thread.id;
     sendingIds = [...sendingIds, id];
+    autoScroll = true;
     error = '';
     messages = messages.filter((message) => message.role !== 'error');
     let failure: Error | undefined;
     try {
-      const state = await api.retry(id);
+      const state = await api.startRetry(id);
       if (threadId === id) {
         thread = state.thread;
         messages = state.messages;
@@ -186,6 +242,10 @@
       error = failure.message;
       await loadThread(id);
     }
+  }
+
+  function traceSummary(steps: ToolTraceStep[]): string {
+    return steps.length === 1 ? '1 Abfrage' : `${steps.length} Abfragen`;
   }
 
   function openMenu(target: ChatThread) {
@@ -314,14 +374,32 @@
       {/if}
     </header>
 
-    <div class="log" bind:this={log} aria-live="polite">
+    <div class="log" bind:this={log} onscroll={onLogScroll}>
       {#each messages as message (message.id)}
         {#if message.role === 'user'}
           <div class="message user" data-testid="message-user"><p>{message.content}</p></div>
         {:else if message.role === 'assistant'}
-          <!-- Assistant replies go only through the sanitizing renderer (no raw HTML, no images, http(s) links only). -->
-          <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-          <div class="message assistant" data-testid="message-assistant">{@html renderMarkdown(message.content)}</div>
+          <div class="message assistant" data-testid="message-assistant">
+            {#if message.toolTrace.length}
+              <details class="tool-trace" data-testid="tool-trace">
+                <summary>
+                  <span class="chevron" aria-hidden="true"></span>
+                  {traceSummary(message.toolTrace)}
+                </summary>
+                <ul class="tool-list">
+                  {#each message.toolTrace as step (step.id)}
+                    <li class="tool-step" class:error={step.status === 'error'} data-testid="tool-step">
+                      <span class="step-dot" aria-hidden="true"></span>
+                      <span>{step.label}</span>
+                    </li>
+                  {/each}
+                </ul>
+              </details>
+            {/if}
+            <!-- Assistant replies go only through the sanitizing renderer (no raw HTML, no images, http(s) links only). -->
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+            {@html renderMarkdown(message.content)}
+          </div>
         {:else}
           <div class="notice error message-error" role="alert" data-testid="message-error">
             <p>{message.content}</p>
@@ -332,7 +410,25 @@
         {/if}
       {/each}
       {#if pending}
-        <p class="thinking" role="status">Agent antwortet …</p>
+        <div class="live-turn" data-testid="live-turn">
+          {#if liveSteps.length}
+            <ul class="tool-list live" aria-label="Abfragen des Agenten" data-testid="live-tool-trace">
+              {#each liveSteps as step (step.id)}
+                <li class="tool-step" class:running={step.status === 'running'} class:error={step.status === 'error'} data-testid="tool-step">
+                  <span class="step-dot" aria-hidden="true"></span>
+                  <span>{step.label}</span>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+          {#if liveText}
+            <!-- Assistant replies go only through the sanitizing renderer (no raw HTML, no images, http(s) links only). -->
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+            <div class="message assistant streaming" data-testid="message-assistant-streaming">{@html renderMarkdown(liveText)}</div>
+          {:else}
+            <p class="thinking" role="status">Agent antwortet …</p>
+          {/if}
+        </div>
       {/if}
     </div>
 
@@ -576,6 +672,98 @@
     justify-self: start;
     padding: 0.1rem 0 0.1rem 0.9rem;
     border-left: 3px solid var(--line);
+  }
+
+  .message.assistant.streaming {
+    border-left-color: var(--accent);
+  }
+
+  .live-turn {
+    display: grid;
+    gap: 0.45rem;
+    justify-items: start;
+  }
+
+  .tool-trace {
+    margin: 0 0 0.45rem;
+    color: var(--soft);
+    font-size: var(--step--1);
+  }
+
+  .tool-trace summary {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.15rem 0;
+    cursor: pointer;
+    list-style: none;
+    font-weight: 550;
+  }
+
+  .tool-trace summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .tool-trace summary .chevron {
+    width: 0.4rem;
+    height: 0.4rem;
+  }
+
+  .tool-trace[open] > summary .chevron {
+    transform: rotate(45deg);
+  }
+
+  .tool-list {
+    display: grid;
+    gap: 0.25rem;
+    margin: 0.35rem 0 0;
+    padding: 0;
+    list-style: none;
+    color: var(--soft);
+    font-size: var(--step--1);
+  }
+
+  .tool-list.live {
+    margin: 0;
+    padding: 0.35rem 0.7rem;
+    border-radius: var(--radius-s);
+    background: var(--surface);
+  }
+
+  .tool-step {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+
+  .step-dot {
+    flex: none;
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .tool-step.running .step-dot {
+    animation: step-pulse 1.1s ease-in-out infinite;
+  }
+
+  .tool-step.error {
+    color: var(--warn);
+  }
+
+  .tool-step.error .step-dot {
+    background: var(--warn);
+  }
+
+  @keyframes step-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.3;
+    }
   }
 
   .message.assistant :global(p) {

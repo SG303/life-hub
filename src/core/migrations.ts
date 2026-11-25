@@ -86,4 +86,11 @@ export const migrations: { version: number; sql: string }[] = [
       ALTER TABLE chat_threads ADD COLUMN auto_settle INTEGER NOT NULL DEFAULT 1;
     `,
   },
+  {
+    // Persisted tool-call trace per completed assistant reply.
+    version: 3,
+    sql: `
+      ALTER TABLE chat_messages ADD COLUMN tool_trace TEXT;
+    `,
+  },
 ];
