@@ -43,6 +43,8 @@ tailscale serve --bg 3000
 
 Then add the Serve host name (for example `life-hub.example.ts.net`) to `ALLOWED_HOSTS` and keep the Docker bridge in `TRUSTED_PROXIES` (default in `.env.example`) so `X-Forwarded-Proto`/`X-Forwarded-Host` are honoured. Any other reverse proxy works the same way. Plain HTTP on the LAN works as a normal browser tab.
 
+With Docker port publishing every client, not only the proxy, reaches the container from the Docker bridge. Life Hub therefore checks the `Host` header itself against `ALLOWED_HOSTS` as well as `X-Forwarded-Host`, so a forged forwarded header cannot get past the DNS-rebinding protection. A reverse proxy must either pass the original `Host` through or send a loopback name (`127.0.0.1`, `localhost`) or another name listed in `ALLOWED_HOSTS`.
+
 ### Agent (for example Hermes Agent)
 
 | Direction | Setting |
@@ -61,6 +63,7 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` / `MCP_PORT` | `3000` / `3001` | UI/API listener and MCP listener (both bind `0.0.0.0`). |
+| `LIFE_HUB_BIND` / `MCP_BIND` | `0.0.0.0` | Docker Compose only: host address the UI/API and MCP ports are published on (for example a Tailscale IP). |
 | `ALLOWED_HOSTS` | – | Host names the browser may use (DNS-rebinding protection). Loopback is always allowed. |
 | `TRUSTED_PROXIES` | – | IPs/CIDRs whose `X-Forwarded-*` headers are trusted. |
 | `TZ` | `Europe/Zurich` | Time zone for due dates. |

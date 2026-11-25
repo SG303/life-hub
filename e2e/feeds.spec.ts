@@ -73,6 +73,10 @@ test('manages sources: RSS, YouTube handle, podcast, edit, delete, OPML; refresh
   await expect(page.getByTestId('today-news').getByTestId('feed-item').first()).toBeVisible();
   await expect(page.getByTestId('today-video').getByTestId('feed-item').first()).toBeVisible();
   await expect(page.getByTestId('today-podcast')).toBeVisible();
+
+  // Agent fragen is offered on Heute feed entries too.
+  await page.getByTestId('today-news').getByTestId('feed-item').first().getByRole('button', { name: 'Agent fragen' }).click();
+  await expect(page.getByTestId('chat-context')).toContainText('Feed-Eintrag');
 });
 
 test('renders hostile feed content inertly; read, bookmark and filters work; links go to the original site', async ({ page, request }) => {

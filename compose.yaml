@@ -9,8 +9,9 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "${LIFE_HUB_BIND:-0.0.0.0}:3000:3000"
-      - "${MCP_BIND:-0.0.0.0}:3001:3001"
+      # Host port = container port, both taken from PORT / MCP_PORT in .env.
+      - "${LIFE_HUB_BIND:-0.0.0.0}:${PORT:-3000}:${PORT:-3000}"
+      - "${MCP_BIND:-0.0.0.0}:${MCP_PORT:-3001}:${MCP_PORT:-3001}"
     volumes:
       - life-hub-data:/data
     read_only: true
