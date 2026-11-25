@@ -3,12 +3,25 @@
   import { ago, TYPE_SINGULAR } from '../lib/format';
   import { askAgent } from '../lib/router.svelte';
   import Icon from './Icon.svelte';
+  import SwipeRow from './SwipeRow.svelte';
 
   let {
     item,
     compact = false,
+    swipeOpen = false,
+    onswipeopen,
+    onswiperight,
+    ontask,
     onchange,
-  }: { item: FeedItem; compact?: boolean; onchange: (item: FeedItem) => void } = $props();
+  }: {
+    item: FeedItem;
+    compact?: boolean;
+    swipeOpen?: boolean;
+    onswipeopen?: (open: boolean) => void;
+    onswiperight?: (item: FeedItem) => void;
+    ontask?: (item: FeedItem) => void;
+    onchange: (item: FeedItem) => void;
+  } = $props();
 
   let error = $state('');
 
@@ -26,7 +39,7 @@
   }
 </script>
 
-<li class="entry" class:read={item.read} class:compact data-testid="feed-item" data-type={item.type}>
+{#snippet inner()}
   <div class="body">
     <p class="meta">
       {#if !compact}<span class="type {item.type}">{TYPE_SINGULAR[item.type]}</span>{/if}
@@ -45,11 +58,7 @@
   </div>
   <div class="actions">
     {#if !compact}
-      <button
-        class="button quiet"
-        type="button"
-        onclick={() => update({ read: !item.read })}
-      >
+      <button class="button quiet" type="button" onclick={() => update({ read: !item.read })}>
         <Icon name="read" size={18} /><span>{item.read ? 'Als ungelesen markieren' : 'Als gelesen markieren'}</span>
       </button>
     {/if}
@@ -62,20 +71,62 @@
     >
       <Icon name="bookmark" size={18} filled={item.bookmarked} /><span>Merken</span>
     </button>
+    {#if !compact && ontask}
+      <button class="button quiet" type="button" onclick={() => ontask(item)}>
+        <Icon name="tasks" size={18} /><span>Aufgabe</span>
+      </button>
+    {/if}
     <button class="button quiet" type="button" onclick={() => askAgent('feed_item', item.id)}>
       <Icon name="agent" size={18} /><span>Agent fragen</span>
     </button>
   </div>
-</li>
+{/snippet}
+
+{#if compact}
+  <li class="entry compact" class:read={item.read} data-testid="feed-item" data-type={item.type}>
+    {@render inner()}
+  </li>
+{:else}
+  <SwipeRow
+    testid="feed-item"
+    dataType={item.type}
+    open={swipeOpen}
+    onopen={onswipeopen}
+    right={{
+      label: item.read ? 'Ungelesen' : 'Gelesen',
+      icon: 'read',
+      onclick: () => (onswiperight ? onswiperight(item) : void update({ read: !item.read })),
+    }}
+    left={[
+      {
+        label: 'Merken',
+        icon: 'bookmark',
+        tone: 'neutral',
+        pressed: item.bookmarked,
+        filled: item.bookmarked,
+        onclick: () => void update({ bookmarked: !item.bookmarked }),
+      },
+      ...(ontask
+        ? [
+            {
+              label: 'Aufgabe',
+              icon: 'tasks',
+              tone: 'accent' as const,
+              onclick: () => ontask(item),
+            },
+          ]
+        : []),
+    ]}
+  >
+    <div class="entry" class:read={item.read}>
+      {@render inner()}
+    </div>
+  </SwipeRow>
+{/if}
 
 <style>
   .entry {
-    padding: 0.9rem 0;
-    border-top: 1px solid var(--line);
-  }
-
-  .entry:first-child {
-    border-top: 0;
+    padding: 0.9rem 1.25rem;
   }
 
   .meta {

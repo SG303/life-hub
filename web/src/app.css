@@ -141,6 +141,11 @@ textarea {
   list-style: none;
 }
 
+.sheet.swipe-list {
+  padding: 0.25rem 0;
+  overflow: hidden;
+}
+
 .sheet > li:first-child {
   border-top: 0;
 }

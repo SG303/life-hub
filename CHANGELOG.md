@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-25
+
+### Added
+
+- Mobile swipe triage across **Feeds**, **Aufgaben** and **Chat**: swipe right for the primary triage action (mark feed item read/unread, complete/reopen task, settle/reactivate chat) with a floating 5-second «Rückgängig» bar above the dock; swipe left to reveal two tap actions (**Merken** / **Aufgabe** on Feeds, **Bearbeiten** / **Löschen** with confirmation on Tasks, **Schlummern** or **Aufwecken** / **Anheften** or **Lösen** on Chat).
+- Convert feed entries into tasks: the new **Aufgabe** action (in the left-swipe tray and as a regular button on each feed entry) opens the prefilled **Neue Aufgabe** sheet with the entry title and source/link note and marks the entry read on save.
+
 ## [0.6.0] - 2026-11-25
 
 ### Added
@@ -90,7 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SSRF protection checks the IPv4 address inside NAT64 addresses (`64:ff9b::/96`) and blocks the local-use NAT64 range.
 - OPML import skips feed URLs that contain a user name or password.
 
-[Unreleased]: https://github.com/SG303/life-hub/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/SG303/life-hub/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/SG303/life-hub/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/SG303/life-hub/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/SG303/life-hub/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/SG303/life-hub/compare/v0.3.0...v0.4.0

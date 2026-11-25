@@ -1,7 +1,8 @@
 <script lang="ts">
   import Icon from '../components/Icon.svelte';
-  import Sheet from '../components/Sheet.svelte';
+  import TaskCreateSheet from '../components/TaskCreateSheet.svelte';
   import TaskItem from '../components/TaskItem.svelte';
+  import UndoToast from '../components/UndoToast.svelte';
   import { api, type Task } from '../lib/api';
   import { router } from '../lib/router.svelte';
 
@@ -19,10 +20,10 @@
   let today = $state(new Date().toISOString().slice(0, 10));
   let loaded = $state(false);
   let error = $state('');
-  let draft = $state({ title: '', dueDate: '', category: '', note: '' });
   let creating = $state(false);
-  let saving = $state(false);
-  let createError = $state('');
+  let openSwipeId = $state<number | null>(null);
+  let undo = $state<{ id: number; message: string; onundo: () => Promise<void> } | undefined>();
+  let undoSeq = 0;
 
   async function load() {
     try {
@@ -42,68 +43,50 @@
   $effect(() => {
     void status;
     void category;
+    openSwipeId = null;
+    undo = undefined;
     void load();
   });
-
-  function openCreate() {
-    createError = '';
-    creating = true;
-  }
 
   // «Neue Aufgabe» from the home-screen shortcut: open the form once, then drop the flag
   // so a reload or «Zurück» does not open it again.
   if (router.params.has('neu')) {
-    openCreate();
+    creating = true;
     router.go('/aufgaben', { replace: true });
   }
 
-  async function create(event: SubmitEvent) {
-    event.preventDefault();
-    saving = true;
-    createError = '';
+  async function swipeToggleDone(task: Task) {
+    openSwipeId = null;
+    error = '';
+    const targetDone = !task.done;
     try {
-      await api.createTask({
-        title: draft.title,
-        dueDate: draft.dueDate || null,
-        category: draft.category || null,
-        note: draft.note || null,
-      });
-      // The list stays for the next task; everything else starts fresh.
-      draft = { title: '', dueDate: '', category: draft.category, note: '' };
-      creating = false;
+      await api.updateTask(task.id, { done: targetDone });
       await load();
+      const token = ++undoSeq;
+      undo = {
+        id: token,
+        message: targetDone ? 'Aufgabe erledigt' : 'Aufgabe wieder geöffnet',
+        onundo: async () => {
+          try {
+            await api.updateTask(task.id, { done: !targetDone });
+            await load();
+          } catch (e) {
+            error = (e as Error).message;
+          }
+        },
+      };
     } catch (e) {
-      createError = (e as Error).message;
-    } finally {
-      saving = false;
+      error = (e as Error).message;
     }
   }
 </script>
 
 <header class="page-head">
   <h1>Aufgaben</h1>
-  <button class="button primary small" type="button" onclick={openCreate}><Icon name="plus" size={16} />Neue Aufgabe</button>
+  <button class="button primary small" type="button" onclick={() => (creating = true)}><Icon name="plus" size={16} />Neue Aufgabe</button>
 </header>
 
-<Sheet bind:open={creating} title="Neue Aufgabe">
-  <form class="form" onsubmit={create} aria-label="Neue Aufgabe">
-    <label class="field">
-      Titel
-      <!-- svelte-ignore a11y_autofocus -->
-      <input class="input" bind:value={draft.title} required maxlength="200" autocomplete="off" name="title" autofocus />
-    </label>
-    <div class="row">
-      <label class="field">Fällig<input class="input" type="date" bind:value={draft.dueDate} name="dueDate" /></label>
-      <label class="field">Liste<input class="input" bind:value={draft.category} maxlength="60" list="new-task-categories" name="category" /></label>
-    </div>
-    <label class="field">Notiz (optional)<textarea class="input" bind:value={draft.note} maxlength="4000" name="note"></textarea></label>
-    <datalist id="new-task-categories">
-      {#each categories as c (c)}<option value={c}></option>{/each}
-    </datalist>
-    {#if createError}<p class="notice error" role="alert">{createError}</p>{/if}
-    <button class="button primary submit" type="submit" disabled={saving}><Icon name="plus" size={18} />Hinzufügen</button>
-  </form>
-</Sheet>
+<TaskCreateSheet bind:open={creating} {categories} keepCategory oncreated={load} />
 
 <div class="toolbar filters">
   <div class="segments" role="group" aria-label="Status">
@@ -123,9 +106,17 @@
 {#if error}<p class="notice error" role="alert">{error}</p>{/if}
 
 {#if tasks.length}
-  <ul class="sheet">
+  <ul class="sheet swipe-list">
     {#each tasks as task (task.id)}
-      <TaskItem {task} {today} {categories} onchange={load} />
+      <TaskItem
+        {task}
+        {today}
+        {categories}
+        swipeOpen={openSwipeId === task.id}
+        onswipeopen={(isOpen) => (openSwipeId = isOpen ? task.id : openSwipeId === task.id ? null : openSwipeId)}
+        onswiperight={swipeToggleDone}
+        onchange={load}
+      />
     {/each}
   </ul>
 {:else if loaded}
@@ -134,26 +125,11 @@
   </p>
 {/if}
 
+{#if undo}
+  <UndoToast id={undo.id} message={undo.message} onundo={undo.onundo} ondismiss={() => (undo = undefined)} />
+{/if}
+
 <style>
-  .form {
-    display: grid;
-    gap: 0.85rem;
-  }
-
-  .row {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-    gap: 0.75rem;
-  }
-
-  .form .notice {
-    margin: 0;
-  }
-
-  .submit {
-    justify-content: center;
-  }
-
   .filters {
     margin-bottom: 0.5rem;
   }
