@@ -25,9 +25,13 @@ Requirements: Docker with Compose, a host in your private network (LAN/Tailscale
 
 ```sh
 cp .env.example .env
-# edit .env: ALLOWED_HOSTS, AGENT_*, and a token: openssl rand -hex 32 -> MCP_AUTH_TOKEN
-docker compose up -d --build
+# edit .env: LIFE_HUB_VERSION, ALLOWED_HOSTS, AGENT_*, and a token: openssl rand -hex 32 -> MCP_AUTH_TOKEN
+docker login ghcr.io -u <github-user>   # once; password: a classic token with only read:packages
+docker compose pull
+docker compose up -d
 ```
+
+Every release publishes its image to `ghcr.io/sg303/life-hub` (tags `X.Y.Z` and `X.Y`). The package is private like the repository, hence the one-time `docker login`. To build from source instead, skip the login and run `docker compose up -d --build`.
 
 - Web app and `/api/v1`: `http://<host>:3000` (no login: keep it on the private network).
 - MCP endpoint for the agent: `http://<host>:3001/mcp` with `Authorization: Bearer <MCP_AUTH_TOKEN>`.
@@ -92,15 +96,16 @@ Also keep a copy of `.env` outside Git.
 
 ### Updating
 
-Every version is a git tag `vX.Y.Z` with a GitHub release whose notes list the changes (see `CHANGELOG.md`). To update, check out the release and rebuild:
+Every version is a git tag `vX.Y.Z` with a GitHub release whose notes list the changes (see `CHANGELOG.md`) and an image `ghcr.io/sg303/life-hub:X.Y.Z`. To update, set `LIFE_HUB_VERSION=X.Y.Z` in `.env` and pull:
 
 ```sh
-git fetch --tags
-git checkout vX.Y.Z
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
-Schema migrations run on startup after an automatic backup. `/api/v1/health` shows the running version. To roll back, check out the older tag the same way; after a schema migration, also restore the matching backup (see above).
+With `LIFE_HUB_VERSION=X.Y`, the same two commands pick up new patch releases of that line. When building from source, check out the tag (`git fetch --tags && git checkout vX.Y.Z`), set the same version and run `docker compose up -d --build`.
+
+Schema migrations run on startup after an automatic backup. `/api/v1/health` shows the running version. To roll back, set the older version the same way; after a schema migration, also restore the matching backup (see above).
 
 ## Development
 

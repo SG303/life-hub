@@ -68,14 +68,19 @@ jobs:
       - name: Docker smoke test
         run: ./scripts/docker-smoke.sh
 
-  # Tags a new version and publishes its release notes from CHANGELOG.md.
-  # A version is released once; an existing tag is never moved.
+  # Publishes a new version: pushes the image to GHCR as <version> and <major.minor>,
+  # then tags the commit and creates the release with notes from CHANGELOG.md.
+  # A version is released once; an existing tag is never moved. The image is pushed
+  # before the tag, so a failed run can simply be re-run.
   release:
     needs: [test, e2e, docker]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the tag and the GitHub release
+      packages: write # push the image to GHCR
+    env:
+      IMAGE: ghcr.io/sg303/life-hub
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -84,7 +89,8 @@ jobs:
         with:
           node-version-file: .nvmrc
           package-manager-cache: false
-      - name: Create the release
+      - name: Check for a new version
+        id: version
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -92,8 +98,40 @@ jobs:
           version="$(node -p "require('./package.json').version")"
           if gh api "repos/$REPO/git/ref/tags/v$version" --silent 2>/dev/null; then
             echo "v$version is already released"
-            exit 0
+            echo "new=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
           fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "minor=${version%.*}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: steps.version.outputs.new == 'true'
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        if: steps.version.outputs.new == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build and push the image
+        if: steps.version.outputs.new == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
+            ${{ env.IMAGE }}:${{ steps.version.outputs.minor }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+      - name: Create the release
+        if: steps.version.outputs.new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          version: ${{ steps.version.outputs.version }}
+        run: |
           node scripts/release.ts notes > notes.md
           gh release create "v$version" --repo "$REPO" --target "$GITHUB_SHA" \
             --title "v$version" --notes-file notes.md --latest

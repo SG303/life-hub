@@ -26,8 +26,8 @@ Node.js 26 (`.nvmrc`; keep in sync with the `Dockerfile` base image and CI).
 Semantic Versioning (`vX.Y.Z`) with `CHANGELOG.md` (Keep a Changelog). `package.json` holds the version; `/api/v1/health` and the MCP server report it. While the version is 0.x, a MINOR bump means new features or a breaking change, a PATCH bump fixes only.
 
 1. Every pull request with user-visible changes (entries under `## [Unreleased]`) also releases them: run `npm run release -- <major|minor|patch>` in that branch. It moves `[Unreleased]` into a dated section, updates the compare links and bumps `package.json` and `package-lock.json`. Commit the three files with the change.
-2. After the merge, the `release` job in `.github/workflows/ci.yml` waits for all CI jobs on `main`, then creates the tag `v<version>` on the merge commit and a GitHub release with the changelog section as notes (`npm run release -- notes` prints them). Verify that this job succeeded.
-3. Never create, move or reuse tags or releases by hand. A version is released once; if the job finds the tag already, it does nothing.
+2. After the merge, the `release` job in `.github/workflows/ci.yml` waits for all CI jobs on `main`, then pushes the image `ghcr.io/sg303/life-hub:<version>` (plus `:<major.minor>`), creates the tag `v<version>` on the merge commit and a GitHub release with the changelog section as notes (`npm run release -- notes` prints them). Verify that this job succeeded.
+3. Never create, move or reuse tags, releases or image versions by hand. A version is released once; if the job finds the tag already, it does nothing.
 
 `test/release.test.ts` fails when `package.json`, `package-lock.json` and `CHANGELOG.md` disagree about the current version. Deployment stays with the owner (see "Updating" in README.md).
 
