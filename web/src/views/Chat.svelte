@@ -1,10 +1,15 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import Icon from '../components/Icon.svelte';
+  import Sheet from '../components/Sheet.svelte';
+  import ThreadMenu from '../components/ThreadMenu.svelte';
   import { api, type ChatContext, type ChatMessage, type ChatThread } from '../lib/api';
   import { ago } from '../lib/format';
   import { renderMarkdown } from '../lib/markdown';
   import { router } from '../lib/router.svelte';
+  import { wakeLabel } from '../lib/snooze';
+
+  const SETTLED_PAGE = 20;
 
   let threads = $state<ChatThread[]>([]);
   let thread = $state<ChatThread | undefined>();
@@ -18,10 +23,24 @@
   let error = $state('');
   let composer = $state<HTMLTextAreaElement>();
   let log = $state<HTMLElement>();
-  const wide = window.matchMedia('(min-width: 900px)').matches;
+  let menuThread = $state<ChatThread | undefined>();
+  let menuOpen = $state(false);
+  let showSnoozed = $state(false);
+  let showSettled = $state(false);
+  let settledShown = $state(SETTLED_PAGE);
 
   const threadId = $derived(Number(router.params.get('thread')) || undefined);
   const contextParam = $derived(router.params.get('kontext'));
+  /** On phones the conversation replaces the list (full screen, no dock); wide screens show both. */
+  const conversationOpen = $derived(Boolean(threadId || contextParam || router.params.has('neu')));
+
+  const byNewest = (a: string | null, b: string | null) => (b ?? '').localeCompare(a ?? '');
+  const pinned = $derived(threads.filter((t) => t.state === 'pinned'));
+  const active = $derived(threads.filter((t) => t.state === 'active'));
+  const snoozed = $derived(
+    threads.filter((t) => t.state === 'snoozed').sort((a, b) => (a.snoozedUntil ?? '').localeCompare(b.snoozedUntil ?? '')),
+  );
+  const settled = $derived(threads.filter((t) => t.state === 'settled').sort((a, b) => byNewest(a.settledAt, b.settledAt)));
   const sending = $derived(creating || (thread !== undefined && sendingIds.includes(thread.id)));
   const pending = $derived(sending || Boolean(thread?.pending));
 
@@ -42,13 +61,17 @@
       thread = state.thread;
       messages = state.messages;
       error = '';
+      // Opening a chat that woke from its snooze acknowledges it.
+      if (state.thread.woke) {
+        thread = await api.updateThread(id, { snoozedUntil: null });
+        void loadThreads();
+      }
     } catch (e) {
       if (threadId === id) error = (e as Error).message;
     }
   }
 
   $effect(() => {
-    void loadThreads();
     api.agentStatus().then((s) => (status = s), () => (status = undefined));
   });
 
@@ -77,6 +100,11 @@
       },
       (e: Error) => (error = e.message),
     );
+  });
+
+  // A new chat starts with the cursor in the composer.
+  $effect(() => {
+    if (router.params.has('neu') && composer) untrack(() => composer!.focus());
   });
 
   // While a reply is pending on the server (e.g. after a reload), poll until it arrives.
@@ -160,72 +188,133 @@
     }
   }
 
-  async function removeThread(target: ChatThread) {
-    try {
-      await api.deleteThread(target.id);
-      if (thread?.id === target.id) router.go('/chat', { replace: true });
-      await loadThreads();
-    } catch (e) {
-      error = (e as Error).message;
-    }
+  function openMenu(target: ChatThread) {
+    menuThread = target;
+    menuOpen = true;
+  }
+
+  function menuChanged(updated: ChatThread) {
+    menuOpen = false;
+    threads = threads.map((t) => (t.id === updated.id ? updated : t));
+    if (thread?.id === updated.id) thread = updated;
+  }
+
+  function menuDeleted(deleted: ChatThread) {
+    menuOpen = false;
+    threads = threads.filter((t) => t.id !== deleted.id);
+    if (thread?.id === deleted.id) router.go('/chat', { replace: true });
+  }
+
+  function rowMeta(item: ChatThread): string {
+    if (item.pending) return 'Agent antwortet …';
+    if (item.state === 'snoozed') return `bis ${wakeLabel(item.snoozedUntil!)}`;
+    if (item.state === 'settled') return `erledigt ${ago(item.settledAt)}`;
+    return ago(item.updatedAt);
   }
 
   function open(event: MouseEvent, path: string) {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
     event.preventDefault();
     router.go(path);
   }
+
+  // The list stays current when coming back from a conversation.
+  $effect(() => {
+    void conversationOpen;
+    void loadThreads();
+  });
 
   function keydown(event: KeyboardEvent) {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) void send();
   }
 </script>
 
-<header class="page-head">
-  <h1>Chat</h1>
-  <div class="toolbar">
-    {#if status}
-      <p class="agent-status meta" data-testid="agent-status">
-        {#if !status.configured}
-          Kein Agent konfiguriert.
-        {:else}
-          <span class="dot" class:up={status.reachable} aria-hidden="true"></span>
-          {status.model}, {status.reachable ? 'erreichbar' : 'nicht erreichbar'}
-        {/if}
-      </p>
-    {/if}
-    <a class="button" href="/chat" onclick={(e) => open(e, '/chat')}><Icon name="plus" size={18} />Neuer Chat</a>
-  </div>
-</header>
+{#snippet row(item: ChatThread)}
+  <li class="row" class:current={item.id === thread?.id} data-testid="thread">
+    <a href="/chat?thread={item.id}" onclick={(e) => open(e, `/chat?thread=${item.id}`)}>
+      <span class="row-title">{item.title}</span>
+      <span class="meta">
+        {#if item.woke}<span class="badge">Wieder da</span>{/if}
+        {rowMeta(item)}
+      </span>
+    </a>
+    <button class="button quiet icon" type="button" onclick={() => openMenu(item)} aria-label="Aktionen: {item.title}">
+      <Icon name="more" size={20} />
+    </button>
+  </li>
+{/snippet}
 
-<div class="layout">
-  <details class="history" open={wide}>
-    <summary>Verlauf ({threads.length})</summary>
-    {#if threads.length}
-      <ul>
-        {#each threads as item (item.id)}
-          <li class:current={item.id === thread?.id}>
-            <a href="/chat?thread={item.id}" onclick={(e) => open(e, `/chat?thread=${item.id}`)}>
-              <span class="thread-title">{item.title}</span>
-              <span class="meta">{ago(item.updatedAt)}</span>
-            </a>
-            <button class="button quiet" type="button" onclick={() => removeThread(item)} aria-label="Chat löschen: {item.title}">
-              <Icon name="trash" size={16} />
-            </button>
-          </li>
-        {/each}
-      </ul>
-    {:else}
-      <p class="empty">Noch keine Chats.</p>
+{#snippet agentBadge()}
+  {#if status}
+    <span class="agent-status" data-testid="agent-status">
+      <span class="dot" class:up={status.configured && status.reachable} class:off={!status.configured} aria-hidden="true"></span>
+      {status.configured ? status.model : 'Kein Agent'}
+      <span class="visually-hidden">{!status.configured ? '' : status.reachable ? ', erreichbar' : ', nicht erreichbar'}</span>
+    </span>
+  {/if}
+{/snippet}
+
+<div class="chat" class:open={conversationOpen}>
+  <section class="list-pane" aria-labelledby="h-chat">
+    <header class="list-head">
+      <h1 id="h-chat">Chat</h1>
+      {@render agentBadge()}
+      <a class="button primary small" href="/chat?neu" onclick={(e) => open(e, '/chat?neu')}><Icon name="plus" size={16} />Neuer Chat</a>
+    </header>
+
+    {#if pinned.length}
+      <h2 class="group">Angeheftet</h2>
+      <ul class="threads">{#each pinned as item (item.id)}{@render row(item)}{/each}</ul>
     {/if}
-  </details>
+
+    <h2 class="group">Aktiv</h2>
+    {#if active.length}
+      <ul class="threads">{#each active as item (item.id)}{@render row(item)}{/each}</ul>
+    {:else}
+      <p class="empty">Keine aktiven Chats.</p>
+    {/if}
+
+    {#if snoozed.length}
+      <button class="shelf" type="button" aria-expanded={showSnoozed} onclick={() => (showSnoozed = !showSnoozed)}>
+        <span class="chevron" aria-hidden="true"></span>Schlummernd <span class="count">{snoozed.length}</span>
+      </button>
+      {#if showSnoozed}
+        <ul class="threads">{#each snoozed as item (item.id)}{@render row(item)}{/each}</ul>
+      {/if}
+    {/if}
+
+    {#if settled.length}
+      <button class="shelf" type="button" aria-expanded={showSettled} onclick={() => (showSettled = !showSettled)}>
+        <span class="chevron" aria-hidden="true"></span>Erledigt <span class="count">{settled.length}</span>
+      </button>
+      {#if showSettled}
+        <ul class="threads">{#each settled.slice(0, settledShown) as item (item.id)}{@render row(item)}{/each}</ul>
+        {#if settled.length > settledShown}
+          <button class="button quiet" type="button" onclick={() => (settledShown += SETTLED_PAGE)}>
+            Mehr anzeigen ({settled.length - settledShown})
+          </button>
+        {/if}
+      {/if}
+    {/if}
+  </section>
 
   <section class="conversation" aria-label="Unterhaltung">
-    <div class="log" bind:this={log} aria-live="polite">
-      {#if !messages.length && !pending}
-        <p class="empty intro">
-          Frag den Agenten zu deinen Aufgaben und Feeds. Er kann sie über die Life-Hub-Schnittstelle lesen, aber nichts ändern.
-        </p>
+    <header class="conv-head">
+      <a class="button quiet icon back" href="/chat" onclick={(e) => open(e, '/chat')} aria-label="Zurück zur Chat-Liste">
+        <Icon name="back" size={22} />
+      </a>
+      <div class="conv-title">
+        <p class="title">{thread?.title ?? 'Neuer Chat'}</p>
+        {@render agentBadge()}
+      </div>
+      {#if thread}
+        <button class="button quiet icon" type="button" onclick={() => openMenu(thread!)} aria-label="Aktionen: {thread.title}">
+          <Icon name="more" size={20} />
+        </button>
       {/if}
+    </header>
+
+    <div class="log" bind:this={log} aria-live="polite">
       {#each messages as message (message.id)}
         {#if message.role === 'user'}
           <div class="message user" data-testid="message-user"><p>{message.content}</p></div>
@@ -255,10 +344,10 @@
           <div class="context-head">
             <span>Wird mitgesendet: {context.type === 'task' ? 'Aufgabe' : 'Feed-Eintrag'} «{context.title}»</span>
             <button
-              class="button quiet"
+              class="button quiet icon"
               type="button"
               aria-label="Kontext entfernen"
-              onclick={() => router.go(thread ? `/chat?thread=${thread.id}` : '/chat', { replace: true })}
+              onclick={() => router.go(thread ? `/chat?thread=${thread.id}` : '/chat?neu', { replace: true })}
             >
               <Icon name="close" size={16} />
             </button>
@@ -266,106 +355,203 @@
           <pre>{context.text}</pre>
         </div>
       {/if}
-      <label class="visually-hidden" for="chat-input">Nachricht</label>
-      <textarea
-        id="chat-input"
-        class="input"
-        bind:this={composer}
-        bind:value={draft}
-        onkeydown={keydown}
-        maxlength="8000"
-        rows="3"
-        placeholder={context ? 'Was möchtest du dazu wissen?' : 'Nachricht an den Agenten'}
-      ></textarea>
-      <div class="send-row">
-        <span class="meta">Strg+Enter sendet</span>
-        <button class="button primary" type="submit" disabled={pending || !draft.trim()}>Senden</button>
+      <div class="input-row">
+        <label class="visually-hidden" for="chat-input">Nachricht</label>
+        <textarea
+          id="chat-input"
+          class="input"
+          bind:this={composer}
+          bind:value={draft}
+          onkeydown={keydown}
+          maxlength="8000"
+          rows="1"
+          placeholder={context ? 'Was möchtest du dazu wissen?' : 'Nachricht an den Agenten'}
+        ></textarea>
+        <button class="button primary send" type="submit" disabled={pending || !draft.trim()} aria-label="Senden">
+          <Icon name="send" size={20} />
+        </button>
       </div>
     </form>
   </section>
 </div>
 
+<Sheet bind:open={menuOpen} title={menuThread?.title ?? 'Chat'}>
+  {#if menuThread}
+    <ThreadMenu thread={menuThread} onchanged={menuChanged} ondeleted={menuDeleted} />
+  {/if}
+</Sheet>
+
 <style>
+  .list-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.85rem;
+    margin: 0.5rem 0 1rem;
+  }
+
+  .list-head .small {
+    margin-left: auto;
+  }
+
   .agent-status {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    margin: 0;
+    color: var(--soft);
+    font-size: var(--step--1);
   }
 
+  /* Filled olive = reachable, ochre ring = down, grey ring = not configured (as on Heute). */
   .dot {
-    width: 0.6rem;
-    height: 0.6rem;
+    width: 0.55rem;
+    height: 0.55rem;
     border-radius: 50%;
-    background: var(--warn);
+    box-shadow: inset 0 0 0 2px var(--warn);
   }
 
   .dot.up {
     background: var(--accent);
+    box-shadow: none;
   }
 
-  .layout {
-    display: grid;
-    gap: 1rem;
+  .dot.off {
+    box-shadow: inset 0 0 0 2px var(--soft);
   }
 
-  .history summary {
-    cursor: pointer;
-    font-weight: 620;
-    padding: 0.4rem 0;
+  .group {
+    margin: 1.25rem 0 0.4rem;
+    color: var(--soft);
+    font-size: var(--step-0);
+    font-weight: 650;
   }
 
-  .history ul {
-    margin: 0.25rem 0 0;
-    padding: 0;
+  .threads {
+    margin: 0;
+    padding: 0.2rem 0.5rem;
+    border-radius: var(--radius-l);
+    background: var(--surface);
     list-style: none;
-    max-height: 16rem;
-    overflow-y: auto;
   }
 
-  .history li {
+  .row {
     display: flex;
     align-items: center;
-    border-radius: var(--radius-s);
+    border-top: 1px solid var(--line);
   }
 
-  .history li.current {
-    background: var(--accent-wash);
+  .row:first-child {
+    border-top: 0;
   }
 
-  .history a {
+  .row.current a {
+    color: var(--accent);
+  }
+
+  .row a {
     flex: 1;
     min-width: 0;
     display: grid;
-    padding: 0.45rem 0.6rem;
+    gap: 0.1rem;
+    padding: 0.7rem 0.6rem;
     color: var(--ink);
     text-decoration: none;
   }
 
-  .thread-title {
+  .row-title {
     overflow: hidden;
+    font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
+  .badge {
+    margin-right: 0.35rem;
+    padding: 0.05rem 0.45rem;
+    border-radius: 999px;
+    background: var(--accent-wash);
+    color: var(--accent);
+    font-weight: 650;
+  }
+
+  .icon {
+    justify-content: center;
+    width: 2.75rem;
+    padding: 0;
+  }
+
+  .shelf {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    margin: 1.25rem 0 0.4rem;
+    padding: 0.25rem 0;
+    border: 0;
+    background: none;
+    color: var(--soft);
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .chevron {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    transform: rotate(-45deg);
+    transition: transform 120ms ease-out;
+  }
+
+  .shelf[aria-expanded='true'] .chevron {
+    transform: rotate(45deg);
+  }
+
+  .count {
+    font-weight: 450;
+  }
+
   .conversation {
-    display: grid;
-    gap: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
     min-width: 0;
   }
 
+  .conv-head {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .back {
+    margin-left: -0.6rem;
+  }
+
+  .conv-title {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .conv-title .title {
+    margin: 0;
+    overflow: hidden;
+    font-size: 1.125rem;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .log {
+    flex: 1;
     display: grid;
     gap: 0.9rem;
     align-content: start;
-    min-height: 12rem;
-    max-height: 60dvh;
+    min-height: 0;
     overflow-y: auto;
-    padding: 0.25rem 0.1rem;
-  }
-
-  .intro {
-    max-width: 48ch;
+    padding: 0.5rem 0.1rem;
   }
 
   .message {
@@ -415,14 +601,37 @@
   .composer {
     display: grid;
     gap: 0.5rem;
-    padding: 0.85rem 1rem;
+    padding: 0.5rem;
     border-radius: var(--radius-l);
     background: var(--surface);
   }
 
+  .input-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.5rem;
+  }
+
+  .input-row textarea {
+    flex: 1;
+    min-height: 2.75rem;
+    max-height: 9rem;
+    border: 0;
+    border-radius: var(--radius-m);
+    resize: none;
+    field-sizing: content;
+  }
+
+  .send {
+    flex: none;
+    justify-content: center;
+    width: 2.75rem;
+    padding: 0;
+  }
+
   .context {
     border-left: 3px solid var(--accent);
-    padding-left: 0.75rem;
+    padding: 0.25rem 0 0 0.75rem;
   }
 
   .context-head {
@@ -443,26 +652,44 @@
     white-space: pre-wrap;
   }
 
-  .send-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
+  /* Phones: the list, or one conversation filling the screen with the composer at the bottom. */
+  @media (max-width: 899px) {
+    .chat:not(.open) .conversation,
+    .chat.open .list-pane {
+      display: none;
+    }
+
+    .chat.open .conversation {
+      position: fixed;
+      inset: 0;
+      z-index: 6;
+      padding: calc(0.5rem + env(safe-area-inset-top, 0px)) 1rem calc(0.6rem + env(safe-area-inset-bottom, 0px));
+      background: var(--bg);
+    }
   }
 
+  /* Wide screens: list and conversation side by side; the dock stays. */
   @media (min-width: 900px) {
-    .layout {
-      grid-template-columns: 15rem 1fr;
+    .chat {
+      display: grid;
+      grid-template-columns: 20rem minmax(0, 1fr);
+      gap: 2rem;
       align-items: start;
     }
 
-    .history summary {
-      pointer-events: none;
-      list-style: none;
+    .list-pane {
+      max-height: calc(100dvh - var(--dock-space) - 2rem);
+      overflow-y: auto;
     }
 
-    .history ul {
-      max-height: 70dvh;
+    .conversation {
+      position: sticky;
+      top: 1.75rem;
+      height: calc(100dvh - var(--dock-space) - 2.5rem);
+    }
+
+    .back {
+      display: none;
     }
   }
 </style>

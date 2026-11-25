@@ -10,11 +10,16 @@
   }: { open?: boolean; title: string; children: Snippet } = $props();
 
   let dialog = $state<HTMLDialogElement>();
+  let closeButton = $state<HTMLButtonElement>();
   const id = $props.id();
 
   $effect(() => {
     if (!dialog) return;
-    if (open && !dialog.open) dialog.showModal();
+    if (open && !dialog.open) {
+      dialog.showModal();
+      // Without a field to type into, focus the sheet itself rather than ringing the close button.
+      if (document.activeElement === closeButton) dialog.focus();
+    }
     if (!open && dialog.open) dialog.close();
   });
 
@@ -24,11 +29,11 @@
   }
 </script>
 
-<dialog bind:this={dialog} aria-labelledby={id} onclose={() => (open = false)} onclick={backdrop}>
+<dialog bind:this={dialog} tabindex="-1" aria-labelledby={id} onclose={() => (open = false)} onclick={backdrop}>
   <div class="panel">
     <header>
       <h2 {id}>{title}</h2>
-      <button class="button quiet close" type="button" onclick={() => (open = false)} aria-label="Schliessen">
+      <button bind:this={closeButton} class="button quiet close" type="button" onclick={() => (open = false)} aria-label="Schliessen">
         <Icon name="close" size={20} />
       </button>
     </header>
@@ -48,6 +53,10 @@
     background: var(--surface);
     color: var(--ink);
     box-shadow: var(--shadow);
+  }
+
+  dialog:focus {
+    outline: none;
   }
 
   dialog::backdrop {

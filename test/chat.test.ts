@@ -187,6 +187,68 @@ describe('ChatService', () => {
   });
 });
 
+describe('chat thread states', () => {
+  const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const age = (ctx: ReturnType<typeof setup>, id: number, days: number) =>
+    ctx.db.prepare('UPDATE chat_threads SET updated_at = ? WHERE id = ?').run(daysAgo(days), id);
+  const state = (ctx: ReturnType<typeof setup>, id: number) => ctx.chat.requireThread(id).state;
+
+  it('settles threads automatically after a week without activity, except pinned or opted-out ones', async () => {
+    const ctx = setup(() => reply('ok'));
+    const [fresh, stale, pinned, optedOut] = [1, 2, 3, 4].map(() => ctx.chat.createThread());
+    for (const thread of [stale, pinned, optedOut]) age(ctx, thread!.id, 8);
+    ctx.chat.updateThread(pinned!.id, { pinned: true });
+    age(ctx, pinned!.id, 8);
+    ctx.chat.updateThread(optedOut!.id, { autoSettle: false });
+
+    expect(state(ctx, fresh!.id)).toBe('active');
+    expect(ctx.chat.requireThread(stale!.id)).toMatchObject({ state: 'settled', settledAt: expect.any(String) });
+    expect(state(ctx, pinned!.id)).toBe('pinned');
+    expect(state(ctx, optedOut!.id)).toBe('active');
+
+    // A new message brings it back; so does reactivating it by hand.
+    await ctx.chat.send(stale!.id, { content: 'Noch eine Frage' });
+    expect(state(ctx, stale!.id)).toBe('active');
+    age(ctx, stale!.id, 9);
+    expect(state(ctx, stale!.id)).toBe('settled');
+    ctx.chat.updateThread(stale!.id, { settled: false });
+    expect(state(ctx, stale!.id)).toBe('active');
+  });
+
+  it('snoozes until the wake-up time, then shows the thread as woken until it is opened', () => {
+    const ctx = setup(() => reply('ok'));
+    const thread = ctx.chat.createThread();
+    const now = new Date();
+    const later = new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+    expect(ctx.chat.updateThread(thread.id, { snoozedUntil: later }, now)).toMatchObject({ state: 'snoozed', woke: false });
+
+    // Time passes: the snooze ran out while the thread had no other activity for days.
+    age(ctx, thread.id, 10);
+    ctx.db.prepare('UPDATE chat_threads SET snoozed_until = ? WHERE id = ?').run(daysAgo(0.01), thread.id);
+    expect(ctx.chat.requireThread(thread.id)).toMatchObject({ state: 'active', woke: true });
+    expect(ctx.chat.updateThread(thread.id, { snoozedUntil: null })).toMatchObject({ state: 'active', woke: false });
+  });
+
+  it('rejects snooze times in the past or more than a year ahead, and empty titles', () => {
+    const ctx = setup(() => reply('ok'));
+    const thread = ctx.chat.createThread();
+    expect(() => ctx.chat.updateThread(thread.id, { snoozedUntil: daysAgo(1) })).toThrow('Ungültige Schlummerzeit.');
+    expect(() => ctx.chat.updateThread(thread.id, { snoozedUntil: daysAgo(-400) })).toThrow('Ungültige Schlummerzeit.');
+    expect(() => ctx.chat.updateThread(thread.id, { snoozedUntil: 'morgen' })).toThrow('Ungültige Schlummerzeit.');
+    expect(() => ctx.chat.updateThread(thread.id, { title: '   ' })).toThrow('Titel fehlt.');
+    expect(ctx.chat.updateThread(thread.id, { title: '  Ferien   2027 ' }).title).toBe('Ferien 2027');
+  });
+
+  it('settling unpins and unsnoozes; pinning clears settled and snoozed', () => {
+    const ctx = setup(() => reply('ok'));
+    const thread = ctx.chat.createThread();
+    ctx.chat.updateThread(thread.id, { pinned: true });
+    expect(ctx.chat.updateThread(thread.id, { settled: true })).toMatchObject({ state: 'settled' });
+    expect(ctx.chat.updateThread(thread.id, { pinned: true })).toMatchObject({ state: 'pinned', settledAt: null });
+    expect(ctx.chat.updateThread(thread.id, { pinned: false }).state).toBe('active');
+  });
+});
+
 describe('SQLite backup and restore', () => {
   it('round-trips an online backup and ignores stale WAL files', () => {
     const dir = tempDir();

@@ -8,6 +8,8 @@
   import Today from './views/Today.svelte';
 
   const current = $derived(NAV.find((entry) => entry.path === router.path) ?? NAV[0]);
+  /** An open conversation takes the whole phone screen; the dock comes back with «Zurück». */
+  const chatOpen = $derived(current.path === '/chat' && ['thread', 'kontext', 'neu'].some((key) => router.params.has(key)));
 
   $effect(() => {
     document.title = current.path === '/' ? 'Life Hub' : `${current.label} – Life Hub`;
@@ -16,7 +18,41 @@
   function navigate(event: MouseEvent, path: string) {
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
     event.preventDefault();
+    if (longPressed) {
+      // The click that ends a long press must not open the list on top of the new chat.
+      longPressed = false;
+      return;
+    }
     router.go(path);
+  }
+
+  // Long press on the agent button: a new chat right away. A short tap still opens the list.
+  const LONG_PRESS_MS = 500;
+  let pressTimer: ReturnType<typeof setTimeout> | undefined;
+  let pressStart = { x: 0, y: 0 };
+  let longPressed = false;
+
+  function pressDown(event: PointerEvent) {
+    if (event.button !== 0) return;
+    longPressed = false;
+    pressStart = { x: event.clientX, y: event.clientY };
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => {
+      longPressed = true;
+      navigator.vibrate?.(15);
+      router.go('/chat?neu');
+      // Phones open the keyboard only for focus during a user gesture, i.e. when the finger lifts.
+      window.addEventListener('pointerup', () => document.getElementById('chat-input')?.focus(), { once: true });
+    }, LONG_PRESS_MS);
+  }
+
+  function pressMove(event: PointerEvent) {
+    // Moving the finger (e.g. scrolling) cancels the long press.
+    if (Math.hypot(event.clientX - pressStart.x, event.clientY - pressStart.y) > 10) clearTimeout(pressTimer);
+  }
+
+  function pressEnd() {
+    clearTimeout(pressTimer);
   }
 </script>
 
@@ -37,13 +73,18 @@
 </main>
 
 <!-- Floating dock on every screen size; the agent (Chat) sits in the middle. -->
-<nav class="dock" aria-label="Hauptnavigation">
+<nav class="dock" class:chat-open={chatOpen} aria-label="Hauptnavigation">
   {#each NAV as entry (entry.path)}
     <a
       href={entry.path}
       class:agent={entry.path === '/chat'}
       aria-current={entry.path === current.path ? 'page' : undefined}
       onclick={(e) => navigate(e, entry.path)}
+      onpointerdown={entry.path === '/chat' ? pressDown : undefined}
+      onpointermove={entry.path === '/chat' ? pressMove : undefined}
+      onpointerup={entry.path === '/chat' ? pressEnd : undefined}
+      onpointercancel={entry.path === '/chat' ? pressEnd : undefined}
+      oncontextmenu={entry.path === '/chat' ? (e) => e.preventDefault() : undefined}
     >
       <Icon name={entry.icon} size={entry.path === '/chat' ? 28 : 22} />
       <span class:visually-hidden={entry.path === '/chat'}>{entry.label}</span>
@@ -116,6 +157,10 @@
   }
 
   .dock a.agent {
+    /* No system link menu or text selection on long press. */
+    -webkit-touch-callout: none;
+    user-select: none;
+    touch-action: manipulation;
     width: 3.6rem;
     height: 3.6rem;
     margin: 0 0.2rem;
@@ -130,6 +175,12 @@
 
   .dock a.agent[aria-current='page'] {
     box-shadow: 0 0 0 3px var(--accent-wash);
+  }
+
+  @media (max-width: 899px) {
+    .dock.chat-open {
+      display: none;
+    }
   }
 
   @media (min-width: 1000px) {

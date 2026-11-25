@@ -7,6 +7,8 @@ import { AgentError, type AgentClient, type AgentMessage } from './agent.js';
 
 export type ContextType = 'task' | 'feed_item';
 export type MessageRole = 'user' | 'assistant' | 'error';
+/** Where a thread shows up in the chat list. */
+export type ThreadState = 'pinned' | 'active' | 'snoozed' | 'settled';
 
 export interface ChatThread {
   id: number;
@@ -16,6 +18,23 @@ export interface ChatThread {
   createdAt: string;
   updatedAt: string;
   pending: boolean;
+  state: ThreadState;
+  /** Wake-up time while snoozed; after it passed and until the thread is opened, `woke` is true. */
+  snoozedUntil: string | null;
+  woke: boolean;
+  /** When the thread was settled, by hand or automatically after `AUTO_SETTLE_DAYS` without activity. */
+  settledAt: string | null;
+  /** False: never settle this thread automatically. */
+  autoSettle: boolean;
+}
+
+export interface ThreadPatch {
+  title?: string;
+  pinned?: boolean;
+  /** ISO time in the future, or null to wake the thread (also clears `woke`). */
+  snoozedUntil?: string | null;
+  settled?: boolean;
+  autoSettle?: boolean;
 }
 
 export interface ChatMessage {
@@ -37,6 +56,10 @@ export interface ChatContextProvider {
 }
 
 export const CHAT_LIMITS = { message: 8000, snapshot: 2000, reply: 20_000, title: 120 };
+/** Threads without activity for this long move to «Erledigt» unless pinned or opted out. */
+export const AUTO_SETTLE_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_SNOOZE_MS = 366 * DAY_MS;
 
 interface ThreadRow {
   id: number;
@@ -45,6 +68,11 @@ interface ThreadRow {
   context_ref_id: number | null;
   created_at: string;
   updated_at: string;
+  pinned_at: string | null;
+  snoozed_until: string | null;
+  settled_at: string | null;
+  unsettled_at: string | null;
+  auto_settle: number;
 }
 
 interface MessageRow {
@@ -75,7 +103,23 @@ export class ChatService {
     this.context = context;
   }
 
-  private toThread(row: ThreadRow): ChatThread {
+  private toThread(row: ThreadRow, now = Date.now()): ChatThread {
+    const pending = this.inFlight.has(row.id);
+    const snoozedUntil = row.snoozed_until ? Date.parse(row.snoozed_until) : null;
+    // Last sign of life: a message, waking from a snooze, or being reactivated by hand.
+    const activity = Math.max(
+      Date.parse(row.updated_at),
+      row.unsettled_at ? Date.parse(row.unsettled_at) : 0,
+      snoozedUntil !== null && snoozedUntil <= now ? snoozedUntil : 0,
+    );
+    const autoSettledAt =
+      row.auto_settle && !row.pinned_at && !pending && now - activity >= AUTO_SETTLE_DAYS * DAY_MS
+        ? new Date(activity + AUTO_SETTLE_DAYS * DAY_MS).toISOString()
+        : null;
+    let state: ThreadState = 'active';
+    if (row.pinned_at) state = 'pinned';
+    else if (snoozedUntil !== null && snoozedUntil > now) state = 'snoozed';
+    else if (row.settled_at || autoSettledAt) state = 'settled';
     return {
       id: row.id,
       title: row.title,
@@ -83,15 +127,57 @@ export class ChatService {
       contextRefId: row.context_ref_id,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      pending: this.inFlight.has(row.id),
+      pending,
+      state,
+      snoozedUntil: row.snoozed_until,
+      woke: state === 'active' && snoozedUntil !== null,
+      settledAt: state === 'settled' ? (row.settled_at ?? autoSettledAt) : null,
+      autoSettle: row.auto_settle === 1,
     };
   }
 
-  listThreads(limit = 100): ChatThread[] {
+  listThreads(limit = 300): ChatThread[] {
     const rows = this.db
       .prepare('SELECT * FROM chat_threads ORDER BY updated_at DESC, id DESC LIMIT ?')
       .all(limit) as unknown as ThreadRow[];
-    return rows.map((row) => this.toThread(row));
+    const now = Date.now();
+    return rows.map((row) => this.toThread(row, now));
+  }
+
+  /** Pin, snooze, settle, rename or opt a thread out of automatic settling. */
+  updateThread(id: number, patch: ThreadPatch, now: Date = new Date()): ChatThread {
+    this.requireThread(id);
+    const at = nowIso(now);
+    const set: Record<string, string | number | null> = {};
+    if (patch.title !== undefined) {
+      const title = patch.title.replace(/\s+/g, ' ').trim();
+      if (!title) throw new HttpError(400, 'invalid_field', 'Titel fehlt.');
+      set.title = cut(title, CHAT_LIMITS.title);
+    }
+    if (patch.autoSettle !== undefined) set.auto_settle = patch.autoSettle ? 1 : 0;
+    if (patch.pinned === true) Object.assign(set, { pinned_at: at, snoozed_until: null, settled_at: null });
+    if (patch.pinned === false) Object.assign(set, { pinned_at: null, unsettled_at: at });
+    if (patch.snoozedUntil !== undefined) {
+      if (patch.snoozedUntil === null) {
+        // Waking counts as activity, so a long snooze does not settle the thread right away.
+        Object.assign(set, { snoozed_until: null, unsettled_at: at });
+      } else {
+        const until = Date.parse(patch.snoozedUntil);
+        if (Number.isNaN(until) || until <= now.getTime() || until > now.getTime() + MAX_SNOOZE_MS) {
+          throw new HttpError(400, 'invalid_field', 'Ungültige Schlummerzeit.');
+        }
+        Object.assign(set, { snoozed_until: new Date(until).toISOString(), pinned_at: null, settled_at: null });
+      }
+    }
+    if (patch.settled === true) Object.assign(set, { settled_at: at, pinned_at: null, snoozed_until: null });
+    if (patch.settled === false) Object.assign(set, { settled_at: null, snoozed_until: null, unsettled_at: at });
+    const columns = Object.keys(set);
+    if (columns.length) {
+      this.db
+        .prepare(`UPDATE chat_threads SET ${columns.map((column) => `${column} = ?`).join(', ')} WHERE id = ?`)
+        .run(...columns.map((column) => set[column]!), id);
+    }
+    return this.requireThread(id);
   }
 
   requireThread(id: number): ChatThread {
@@ -174,7 +260,10 @@ export class ChatService {
       content,
       now,
     );
-    this.db.prepare('UPDATE chat_threads SET updated_at = ? WHERE id = ?').run(now, threadId);
+    // Any new message brings a snoozed or settled thread back to «Aktiv».
+    this.db
+      .prepare('UPDATE chat_threads SET updated_at = ?, snoozed_until = NULL, settled_at = NULL WHERE id = ?')
+      .run(now, threadId);
   }
 
   /**

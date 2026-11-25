@@ -49,6 +49,19 @@ export interface ChatThread {
   createdAt: string;
   updatedAt: string;
   pending: boolean;
+  state: 'pinned' | 'active' | 'snoozed' | 'settled';
+  snoozedUntil: string | null;
+  woke: boolean;
+  settledAt: string | null;
+  autoSettle: boolean;
+}
+
+export interface ThreadPatch {
+  title?: string;
+  pinned?: boolean;
+  snoozedUntil?: string | null;
+  settled?: boolean;
+  autoSettle?: boolean;
 }
 
 export interface ChatMessage {
@@ -137,6 +150,7 @@ export const api = {
   threads: () => request<{ items: ChatThread[] }>('GET', '/chat/threads'),
   createThread: (context?: ChatContext) => request<ChatThread>('POST', '/chat/threads', { context }),
   thread: (id: number) => request<{ thread: ChatThread; messages: ChatMessage[] }>('GET', `/chat/threads/${id}`),
+  updateThread: (id: number, patch: ThreadPatch) => request<ChatThread>('PATCH', `/chat/threads/${id}`, patch),
   deleteThread: (id: number) => request<void>('DELETE', `/chat/threads/${id}`),
   send: (id: number, content: string, context?: ChatContext) =>
     request<{ thread: ChatThread; messages: ChatMessage[] }>('POST', `/chat/threads/${id}/messages`, { content, context }),

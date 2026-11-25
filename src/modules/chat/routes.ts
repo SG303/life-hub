@@ -1,6 +1,19 @@
 import { HttpError, Router, input, reply } from '../../core/http.js';
 import type { AgentClient } from './agent.js';
-import { CHAT_LIMITS, type ChatService, type ContextType } from './service.js';
+import { CHAT_LIMITS, type ChatService, type ContextType, type ThreadPatch } from './service.js';
+
+function threadPatch(body: unknown): ThreadPatch {
+  const data = input.object(body);
+  const patch: ThreadPatch = {
+    title: input.string(data.title, 'Titel', 500),
+    pinned: input.boolean(data.pinned, 'Angeheftet'),
+    settled: input.boolean(data.settled, 'Erledigt'),
+    autoSettle: input.boolean(data.autoSettle, 'Automatisch erledigen'),
+  };
+  if (data.snoozedUntil === null) patch.snoozedUntil = null;
+  else if (data.snoozedUntil !== undefined) patch.snoozedUntil = input.string(data.snoozedUntil, 'Schlummern bis', 40, true);
+  return patch;
+}
 
 function context(value: unknown): { type: ContextType; id: number } | undefined {
   if (value === undefined || value === null) return undefined;
@@ -23,6 +36,7 @@ export function chatRoutes(chat: ChatService, agent: AgentClient): Router {
       return reply(201, chat.createThread({ context: context(data.context) }));
     })
     .get('/threads/:id', ({ params }) => threadState(input.id(params.id)))
+    .patch('/threads/:id', ({ params, body }) => chat.updateThread(input.id(params.id), threadPatch(body)))
     .delete('/threads/:id', ({ params }) => {
       chat.deleteThread(input.id(params.id));
       return reply(204);

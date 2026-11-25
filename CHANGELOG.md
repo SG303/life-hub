@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-25
+
+### Added
+
+- Chat list modelled on T3 Code: chats are grouped into Angeheftet, Aktiv, Schlummernd and Erledigt. The ⋯ menu pins, snoozes (in 1 or 3 hours, today 18:00, tomorrow 09:00, Monday 09:00 or a custom time), settles, reactivates, renames and deletes a chat. Chats without activity for 7 days settle automatically unless pinned or set to «nie»; a new message brings a chat back to Aktiv, and a chat that woke from its snooze is marked «Wieder da».
+- `PATCH /api/v1/chat/threads/:id` for title, pin, snooze, settle and auto-settle.
+- A long press on the agent button in the dock opens a new chat right away (with a short vibration on Android); a short tap still opens the chat list.
+
+### Changed
+
+- On phones a chat opens full screen without the dock, with a back arrow, the model and its status dot in the header, and the composer at the very bottom. The intro text and the «Strg+Enter sendet» hint are gone (Ctrl+Enter still sends). Wide screens show the list and the chat side by side.
+- «Neue Aufgabe», «Neue Quelle» and «Neuer Chat» share one compact olive button style; the Feeds refresh button and «OPML importieren» match their height.
+
 ## [0.3.0] - 2026-11-25
 
 ### Changed
@@ -63,7 +76,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SSRF protection checks the IPv4 address inside NAT64 addresses (`64:ff9b::/96`) and blocks the local-use NAT64 range.
 - OPML import skips feed URLs that contain a user name or password.
 
-[Unreleased]: https://github.com/SG303/life-hub/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/SG303/life-hub/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/SG303/life-hub/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/SG303/life-hub/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/SG303/life-hub/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/SG303/life-hub/releases/tag/v0.1.0
