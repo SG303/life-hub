@@ -3,7 +3,7 @@
   import Icon from '../components/Icon.svelte';
   import TaskItem from '../components/TaskItem.svelte';
   import { api, type Cockpit, type FeedType } from '../lib/api';
-  import { longDate, TYPE_LABEL } from '../lib/format';
+  import { TYPE_LABEL } from '../lib/format';
   import { router } from '../lib/router.svelte';
 
   let cockpit = $state<Cockpit | undefined>();
@@ -24,8 +24,8 @@
     api.agentStatus().then((s) => (agent = s), () => (agent = undefined));
   });
 
-  const heading = $derived(cockpit ? longDate(cockpit.tasks.today) : undefined);
   const due = $derived(cockpit ? [...cockpit.tasks.overdue, ...cockpit.tasks.dueToday] : []);
+  const STATE_LABEL = { up: 'erreichbar', down: 'nicht erreichbar', off: 'nicht konfiguriert' } as const;
   const types: FeedType[] = ['news', 'video', 'podcast'];
   const TYPE_ICON: Record<FeedType, string> = { news: 'feeds', video: 'play', podcast: 'listen' };
 
@@ -36,14 +36,11 @@
 </script>
 
 <header class="top">
-  <p class="brand">Life Hub</p>
+  <h1 class="brand">Life Hub<span class="visually-hidden">: Heute</span></h1>
   {#if agent}
-    <p class="agent" class:down={agent.configured && !agent.reachable}>
-      {#if !agent.configured}
-        Kein Agent konfiguriert
-      {:else}
-        Agent {agent.reachable ? 'erreichbar' : 'nicht erreichbar'}
-      {/if}
+    {@const state = !agent.configured ? 'off' : agent.reachable ? 'up' : 'down'}
+    <p class="agent {state}" title={STATE_LABEL[state]}>
+      Agent<span class="visually-hidden">: {STATE_LABEL[state]}</span>
     </p>
   {/if}
 </header>
@@ -55,11 +52,6 @@
 {#if cockpit}
   <div class="layout">
     <div class="left">
-      <div class="day">
-        <p class="date">{heading?.date}</p>
-        <h1>{heading?.weekday}</h1>
-      </div>
-
       <section class="sheet slab" aria-labelledby="h-due">
         <div class="slab-head">
           <h2 id="h-due">Heute fällig</h2>
@@ -121,8 +113,6 @@
       {/each}
     </section>
   </div>
-{:else}
-  <div class="day"><h1>Heute</h1></div>
 {/if}
 
 <style>
@@ -131,12 +121,14 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
+    margin-bottom: 1.25rem;
   }
 
   .brand {
-    margin: 0;
-    font-weight: 700;
     font-size: 1.0625rem;
+    font-stretch: 100%;
+    font-weight: 700;
+    line-height: 1.45;
   }
 
   .agent {
@@ -151,34 +143,23 @@
     font-size: var(--step--1);
   }
 
+  /* The dot carries the state: olive = reachable, ochre ring = down, grey ring = not configured. */
   .agent::before {
     content: '';
-    width: 0.5rem;
-    height: 0.5rem;
+    width: 0.55rem;
+    height: 0.55rem;
     border-radius: 50%;
     background: var(--accent);
   }
 
   .agent.down::before {
-    background: var(--warn);
+    background: transparent;
+    box-shadow: inset 0 0 0 2px var(--warn);
   }
 
-  .day {
-    margin: 1.5rem 0 1.25rem;
-  }
-
-  .date {
-    margin: 0 0 0.2rem;
-    color: var(--soft);
-    font-size: 1.125rem;
-    font-weight: 500;
-  }
-
-  h1 {
-    font-size: var(--step-4);
-    font-weight: 760;
-    line-height: 0.86;
-    letter-spacing: -0.012em;
+  .agent.off::before {
+    background: transparent;
+    box-shadow: inset 0 0 0 2px var(--soft);
   }
 
   .slab {
@@ -301,7 +282,7 @@
 
     /* Line the feeds heading up with the top of the slab. */
     .feeds-head {
-      margin-top: calc(1.5rem + 1.125rem * 1.45 + 0.2rem + var(--step-4) * 0.86 + 1.25rem);
+      margin-top: 0;
     }
 
     .cards {

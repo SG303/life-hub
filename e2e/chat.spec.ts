@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { api, control, fixturesForApp, nav, removeAllSources, watchForeignRequests } from './support.ts';
+import { addTask, api, control, fixturesForApp, nav, removeAllSources, watchForeignRequests } from './support.ts';
 
 interface Turn {
   authorization: string;
@@ -136,13 +136,12 @@ test('shows a German error with retry when the agent is down, while other views 
   await nav(page, 'Heute');
   await expect(page.getByRole('heading', { name: 'Heute fällig', level: 2 })).toBeVisible();
   await nav(page, 'Aufgaben');
-  await page.getByPlaceholder('Neue Aufgabe').fill(`Trotz Agent-Ausfall ${tag}`);
-  await page.getByRole('button', { name: 'Hinzufügen', exact: true }).click();
+  await addTask(page, { title: `Trotz Agent-Ausfall ${tag}` });
   await expect(page.getByTestId('task').filter({ hasText: `Trotz Agent-Ausfall ${tag}` })).toBeVisible();
   await nav(page, 'Feeds');
   await expect(page.getByRole('button', { name: 'Aktualisieren' })).toBeEnabled();
-  await nav(page, 'Quellen');
-  await expect(page.getByRole('button', { name: 'Abonnieren' })).toBeVisible();
+  await nav(page, 'Mehr');
+  await expect(page.getByRole('button', { name: 'Neue Quelle' })).toBeVisible();
 
   // Agent back: retry succeeds.
   await control('/agent/start');

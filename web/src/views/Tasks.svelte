@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from '../components/Icon.svelte';
+  import Sheet from '../components/Sheet.svelte';
   import TaskItem from '../components/TaskItem.svelte';
   import { api, type Task } from '../lib/api';
 
@@ -18,8 +19,9 @@
   let loaded = $state(false);
   let error = $state('');
   let draft = $state({ title: '', dueDate: '', category: '', note: '' });
-  let showDetails = $state(false);
-  let titleInput = $state<HTMLInputElement>();
+  let creating = $state(false);
+  let saving = $state(false);
+  let createError = $state('');
 
   async function load() {
     try {
@@ -42,61 +44,58 @@
     void load();
   });
 
+  function openCreate() {
+    createError = '';
+    creating = true;
+  }
+
   async function create(event: SubmitEvent) {
     event.preventDefault();
-    const submitted = { ...draft };
+    saving = true;
+    createError = '';
     try {
       await api.createTask({
-        title: submitted.title,
-        dueDate: submitted.dueDate || null,
-        category: submitted.category || null,
-        note: submitted.note || null,
+        title: draft.title,
+        dueDate: draft.dueDate || null,
+        category: draft.category || null,
+        note: draft.note || null,
       });
-      // Clear only what was saved, so typing during the request is not lost. The list stays for the next task.
-      if (draft.title === submitted.title) draft.title = '';
-      if (draft.dueDate === submitted.dueDate) draft.dueDate = '';
-      if (draft.note === submitted.note) draft.note = '';
-      showDetails = false;
-      titleInput?.focus();
+      // The list stays for the next task; everything else starts fresh.
+      draft = { title: '', dueDate: '', category: draft.category, note: '' };
+      creating = false;
       await load();
     } catch (e) {
-      error = (e as Error).message;
+      createError = (e as Error).message;
+    } finally {
+      saving = false;
     }
   }
 </script>
 
 <header class="page-head">
   <h1>Aufgaben</h1>
+  <button class="button primary" type="button" onclick={openCreate}><Icon name="plus" size={18} />Neue Aufgabe</button>
 </header>
 
-<form class="composer" onsubmit={create} aria-label="Neue Aufgabe">
-  <div class="main-row">
-    <label class="visually-hidden" for="task-title">Neue Aufgabe</label>
-    <input
-      id="task-title"
-      class="input"
-      placeholder="Neue Aufgabe"
-      bind:value={draft.title}
-      bind:this={titleInput}
-      required
-      maxlength="200"
-      autocomplete="off"
-    />
-    <button class="button primary" type="submit"><Icon name="plus" size={18} />Hinzufügen</button>
-  </div>
-  <div class="detail-row">
-    <label class="field">Fällig<input class="input" type="date" bind:value={draft.dueDate} name="dueDate" /></label>
-    <label class="field">Liste<input class="input" bind:value={draft.category} maxlength="60" list="new-task-categories" name="category" /></label>
-    {#if showDetails}
-      <label class="field note">Notiz<textarea class="input" bind:value={draft.note} maxlength="4000" name="note"></textarea></label>
-    {:else}
-      <button class="button quiet" type="button" onclick={() => (showDetails = true)}>Notiz hinzufügen</button>
-    {/if}
-  </div>
-  <datalist id="new-task-categories">
-    {#each categories as c (c)}<option value={c}></option>{/each}
-  </datalist>
-</form>
+<Sheet bind:open={creating} title="Neue Aufgabe">
+  <form class="form" onsubmit={create} aria-label="Neue Aufgabe">
+    <label class="field">
+      Titel
+      <!-- svelte-ignore a11y_autofocus -->
+      <input class="input" bind:value={draft.title} required maxlength="200" autocomplete="off" name="title" autofocus />
+    </label>
+    <div class="row">
+      <label class="field">Fällig<input class="input" type="date" bind:value={draft.dueDate} name="dueDate" /></label>
+      <label class="field">Liste<input class="input" bind:value={draft.category} maxlength="60" list="new-task-categories" name="category" /></label>
+    </div>
+    <label class="field">Notiz (optional)<textarea class="input" bind:value={draft.note} maxlength="4000" name="note"></textarea></label>
+    <datalist id="new-task-categories">
+      {#each categories as c (c)}<option value={c}></option>{/each}
+    </datalist>
+    {#if createError}<p class="notice error" role="alert">{createError}</p>{/if}
+    <button class="button primary submit" type="submit" disabled={saving}><Icon name="plus" size={18} />Hinzufügen</button>
+  </form>
+</Sheet>
 
 <div class="toolbar filters">
   <div class="segments" role="group" aria-label="Status">
@@ -123,43 +122,28 @@
   </ul>
 {:else if loaded}
   <p class="empty">
-    {status === 'done' ? 'Noch nichts erledigt.' : 'Keine offenen Aufgaben. Oben eine neue erfassen.'}
+    {status === 'done' ? 'Noch nichts erledigt.' : 'Keine offenen Aufgaben. Mit «Neue Aufgabe» eine erfassen.'}
   </p>
 {/if}
 
 <style>
-  .composer {
+  .form {
     display: grid;
-    gap: 0.75rem;
-    padding: 1.1rem 1.25rem;
-    margin-bottom: 1.5rem;
-    border-radius: var(--radius-l);
-    background: var(--surface);
+    gap: 0.85rem;
   }
 
-  .main-row {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .main-row .input {
-    flex: 1;
-    font-size: var(--step-1);
-  }
-
-  .detail-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: end;
+  .row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
     gap: 0.75rem;
   }
 
-  .detail-row .field {
-    flex: 1 1 9rem;
+  .form .notice {
+    margin: 0;
   }
 
-  .detail-row .note {
-    flex-basis: 100%;
+  .submit {
+    justify-content: center;
   }
 
   .filters {
@@ -170,11 +154,5 @@
     width: auto;
     min-height: 2.5rem;
     border-radius: 999px;
-  }
-
-  @media (max-width: 520px) {
-    .main-row {
-      flex-direction: column;
-    }
   }
 </style>

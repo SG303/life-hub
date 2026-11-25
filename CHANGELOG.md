@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-25
+
+### Changed
+
+- Heute drops the date and weekday so the tasks move up; the agent badge shows only «Agent» with a coloured dot for its state.
+- Aufgaben and Feeds create tasks and sources through a small sheet opened by **Neue Aufgabe** / **Neue Quelle** in the page header; Feeds refreshes with a round icon button next to the title, and the Ungelesen and Gemerkt filters share one row with «Alle gelesen».
+- The **Quellen** tab became **Mehr**: source management (edit, delete, OPML import) plus version and agent info. `/quellen` redirects to `/mehr`.
+
 ## [0.2.0] - 2026-11-25
 
 ### Added
@@ -55,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SSRF protection checks the IPv4 address inside NAT64 addresses (`64:ff9b::/96`) and blocks the local-use NAT64 range.
 - OPML import skips feed URLs that contain a user name or password.
 
-[Unreleased]: https://github.com/SG303/life-hub/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/SG303/life-hub/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/SG303/life-hub/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/SG303/life-hub/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/SG303/life-hub/releases/tag/v0.1.0

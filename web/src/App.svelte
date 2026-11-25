@@ -3,7 +3,7 @@
   import { NAV, router } from './lib/router.svelte';
   import Chat from './views/Chat.svelte';
   import Feeds from './views/Feeds.svelte';
-  import Sources from './views/Sources.svelte';
+  import More from './views/More.svelte';
   import Tasks from './views/Tasks.svelte';
   import Today from './views/Today.svelte';
 
@@ -31,8 +31,8 @@
     <Feeds />
   {:else if current.path === '/chat'}
     <Chat />
-  {:else if current.path === '/quellen'}
-    <Sources />
+  {:else if current.path === '/mehr'}
+    <More />
   {/if}
 </main>
 

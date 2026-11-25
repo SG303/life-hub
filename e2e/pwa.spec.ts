@@ -32,12 +32,12 @@ test('runs in a secure context with strict headers and a valid PWA manifest', as
 test('shows German UI chrome without ß in every view', async ({ page, request }) => {
   await api(request).post('/tasks', { title: 'Sprachtest' });
   await page.goto('/');
-  for (const label of ['Heute', 'Aufgaben', 'Feeds', 'Chat', 'Quellen'] as const) {
+  for (const label of ['Heute', 'Aufgaben', 'Feeds', 'Chat', 'Mehr'] as const) {
     await nav(page, label);
     await page.waitForLoadState('networkidle');
     const text = await page.locator('body').innerText();
     expect(text, label).not.toContain('ß');
     expect(await page.locator('html').getAttribute('lang')).toBe('de-CH');
   }
-  await expect(page.getByRole('heading', { name: 'Quellen', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Mehr', level: 1 })).toBeVisible();
 });
