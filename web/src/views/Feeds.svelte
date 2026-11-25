@@ -104,11 +104,11 @@
 <header class="page-head">
   <h1>Feeds</h1>
   <div class="toolbar">
-    <button class="button icon" type="button" onclick={refresh} disabled={refreshing} aria-label="Aktualisieren" title="Aktualisieren">
-      <span class="glyph" class:spin={refreshing}><Icon name="refresh" size={20} /></span>
+    <button class="button small icon" type="button" onclick={refresh} disabled={refreshing} aria-label="Aktualisieren" title="Aktualisieren">
+      <span class="glyph" class:spin={refreshing}><Icon name="refresh" size={18} /></span>
     </button>
-    <button class="button primary" type="button" onclick={() => (addingSource = true)}>
-      <Icon name="plus" size={18} />Neue Quelle
+    <button class="button primary small" type="button" onclick={() => (addingSource = true)}>
+      <Icon name="plus" size={16} />Neue Quelle
     </button>
   </div>
 </header>
@@ -180,7 +180,7 @@
 
   .icon {
     justify-content: center;
-    width: 2.75rem;
+    width: 2.4rem;
     padding: 0;
   }
 

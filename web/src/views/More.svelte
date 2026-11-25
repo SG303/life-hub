@@ -107,11 +107,11 @@
   <div class="block-head">
     <h2 id="h-sources">Quellen</h2>
     <div class="toolbar">
-      <label class="button">
-        <Icon name="upload" size={18} />OPML importieren
+      <label class="button small">
+        <Icon name="upload" size={16} />OPML importieren
         <input class="visually-hidden" type="file" accept=".opml,.xml,text/xml,application/xml" onchange={importOpml} />
       </label>
-      <button class="button primary" type="button" onclick={() => (adding = true)}><Icon name="plus" size={18} />Neue Quelle</button>
+      <button class="button primary small" type="button" onclick={() => (adding = true)}><Icon name="plus" size={16} />Neue Quelle</button>
     </div>
   </div>
 

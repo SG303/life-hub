@@ -6,8 +6,8 @@ import { AgentClient, type FetchLike } from './agent.js';
 import { chatRoutes } from './routes.js';
 import { ChatService, type ChatContextProvider } from './service.js';
 
-export type { ChatContextProvider, ChatMessage, ChatThread } from './service.js';
-export { ChatService } from './service.js';
+export type { ChatContextProvider, ChatMessage, ChatThread, ThreadPatch, ThreadState } from './service.js';
+export { AUTO_SETTLE_DAYS, ChatService } from './service.js';
 export { AgentClient } from './agent.js';
 
 export interface ChatModule {

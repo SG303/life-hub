@@ -75,4 +75,15 @@ export const migrations: { version: number; sql: string }[] = [
       CREATE INDEX chat_messages_thread ON chat_messages (thread_id, id);
     `,
   },
+  {
+    // Chat list states (pinned, snoozed, settled), modelled on T3 Code's thread list.
+    version: 2,
+    sql: `
+      ALTER TABLE chat_threads ADD COLUMN pinned_at TEXT;
+      ALTER TABLE chat_threads ADD COLUMN snoozed_until TEXT;
+      ALTER TABLE chat_threads ADD COLUMN settled_at TEXT;
+      ALTER TABLE chat_threads ADD COLUMN unsettled_at TEXT;
+      ALTER TABLE chat_threads ADD COLUMN auto_settle INTEGER NOT NULL DEFAULT 1;
+    `,
+  },
 ];

@@ -74,7 +74,7 @@
 
 <header class="page-head">
   <h1>Aufgaben</h1>
-  <button class="button primary" type="button" onclick={openCreate}><Icon name="plus" size={18} />Neue Aufgabe</button>
+  <button class="button primary small" type="button" onclick={openCreate}><Icon name="plus" size={16} />Neue Aufgabe</button>
 </header>
 
 <Sheet bind:open={creating} title="Neue Aufgabe">

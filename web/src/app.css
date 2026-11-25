@@ -194,6 +194,13 @@ textarea {
   background: var(--warn-wash);
 }
 
+/* Compact header actions such as «Neue Aufgabe», «Neue Quelle» and «Neuer Chat». */
+.button.small {
+  min-height: 2.4rem;
+  padding: 0.3rem 0.85rem;
+  font-size: var(--step--1);
+}
+
 .button:disabled {
   opacity: 0.55;
   cursor: not-allowed;

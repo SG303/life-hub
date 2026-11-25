@@ -12,6 +12,13 @@ async function turns(): Promise<Turn[]> {
   return (await control('/agent/turns')) as Turn[];
 }
 
+/** Phones show one conversation full screen; «Zurück» leads to the list (wide screens show both). */
+async function toChatList(page: Page): Promise<void> {
+  const back = page.getByRole('link', { name: 'Zurück zur Chat-Liste' });
+  if (await back.isVisible()) await back.click();
+  await expect(page.getByRole('heading', { name: 'Chat', level: 1 })).toBeVisible();
+}
+
 async function send(page: Page, text: string): Promise<void> {
   await page.getByLabel('Nachricht').fill(text);
   await page.getByRole('button', { name: 'Senden' }).click();
@@ -72,6 +79,7 @@ test('Agent fragen on a task and a feed item; the agent reads live data over MCP
   await expect(page.getByTestId('message-user').first()).toContainText('Was soll ich zuerst erledigen?');
 
   // Agent fragen on a feed item: quoted, marked as untrusted.
+  await toChatList(page);
   await nav(page, 'Feeds');
   await page.getByTestId('feed-item').filter({ hasText: 'Sicherheit Testartikel' }).getByRole('button', { name: 'Agent fragen' }).click();
   await expect(page.getByTestId('chat-context')).toContainText('nicht vertrauenswürdige Daten');
@@ -81,6 +89,7 @@ test('Agent fragen on a task and a feed item; the agent reads live data over MCP
   expect(feedTurn.messages.at(-1)!.content).toContain('<<<ZITAT');
 
   // Start a new chat.
+  await toChatList(page);
   await page.getByRole('link', { name: 'Neuer Chat' }).click();
   await expect(page.getByTestId('message-assistant')).toHaveCount(0);
   await send(page, 'Hallo im neuen Chat');
@@ -107,11 +116,10 @@ test('a reply that arrives after switching chats stays in its own chat', async (
     replied();
   });
 
-  await page.goto('/chat');
+  await page.goto('/chat?neu');
   await send(page, `Frage A ${tag}`);
   await expect(page.getByTestId('message-user')).toContainText(`Frage A ${tag}`);
-  const history = page.locator('details.history');
-  if ((await history.getAttribute('open')) === null) await history.locator('summary').click();
+  await toChatList(page);
   await page.locator(`a[href="/chat?thread=${other.id}"]`).click();
   await expect(page.getByTestId('message-user').first()).toContainText(`Thema B ${tag}`);
 
@@ -126,13 +134,14 @@ test('a reply that arrives after switching chats stays in its own chat', async (
 test('shows a German error with retry when the agent is down, while other views keep working', async ({ page }, info) => {
   const tag = `${info.project.name}-${Date.now()}`;
   await control('/agent/stop');
-  await page.goto('/chat');
+  await page.goto('/chat?neu');
   await send(page, `Bist du da? ${tag}`);
   const error = page.getByTestId('message-error');
   await expect(error).toContainText('Der Agent ist nicht erreichbar.');
   await expect(error.getByRole('button', { name: 'Erneut versuchen' })).toBeVisible();
 
   // Everything else still works.
+  await toChatList(page);
   await nav(page, 'Heute');
   await expect(page.getByRole('heading', { name: 'Heute fällig', level: 2 })).toBeVisible();
   await nav(page, 'Aufgaben');
@@ -146,10 +155,66 @@ test('shows a German error with retry when the agent is down, while other views 
   // Agent back: retry succeeds.
   await control('/agent/start');
   await nav(page, 'Chat');
-  const history = page.locator('details.history');
-  if ((await history.getAttribute('open')) === null) await history.locator('summary').click();
   await page.getByRole('link', { name: new RegExp(`Bist du da\\? ${tag}`) }).click();
   await page.getByRole('button', { name: 'Erneut versuchen' }).click();
   await expect(page.getByTestId('message-assistant')).toContainText('Antwort vom Test-Agenten');
   await expect(page.getByTestId('message-error')).toHaveCount(0);
+});
+
+test('chat list: pin, snooze, settle, reactivate, rename and delete through the actions menu', async ({ page, request }, info) => {
+  const tag = `${info.project.name}-${Date.now()}`;
+  const client = api(request);
+  const thread = await client.post<{ id: number }>('/chat/threads', {});
+  await client.post(`/chat/threads/${thread.id}/messages`, { content: `Zustände ${tag}` });
+  const state = async () => (await client.get<{ thread: { state: string; title: string } }>(`/chat/threads/${thread.id}`)).thread;
+  const menu = page.getByRole('dialog');
+  const act = async (title: string, ...steps: string[]) => {
+    await page.getByRole('button', { name: `Aktionen: ${title}` }).first().click();
+    for (const step of steps) await menu.getByRole('button', { name: step, exact: true }).click();
+    await expect(menu).toBeHidden();
+  };
+
+  await page.goto('/chat');
+  const title = `Zustände ${tag}`;
+  await act(title, 'Anheften');
+  await expect(page.getByRole('heading', { name: 'Angeheftet', level: 2 })).toBeVisible();
+  expect((await state()).state).toBe('pinned');
+
+  await act(title, 'Schlummern …', 'In 1 Stunde');
+  expect((await state()).state).toBe('snoozed');
+  await page.getByRole('button', { name: /^Schlummernd/ }).click();
+  await expect(page.getByTestId('thread').filter({ hasText: title })).toContainText('bis ');
+
+  await act(title, 'Erledigt');
+  expect((await state()).state).toBe('settled');
+  await page.getByRole('button', { name: /^Erledigt \d/ }).click();
+  await act(title, 'Wieder aktivieren');
+  expect((await state()).state).toBe('active');
+
+  await page.getByRole('button', { name: `Aktionen: ${title}` }).click();
+  await menu.getByRole('button', { name: 'Umbenennen' }).click();
+  await menu.getByLabel('Titel').fill(`Umbenannt ${tag}`);
+  await menu.getByRole('button', { name: 'Speichern' }).click();
+  await expect(page.getByTestId('thread').filter({ hasText: `Umbenannt ${tag}` })).toBeVisible();
+
+  await act(`Umbenannt ${tag}`, 'Löschen', 'Löschen');
+  await expect(page.getByTestId('thread').filter({ hasText: `Umbenannt ${tag}` })).toHaveCount(0);
+});
+
+test('a long press on the agent button starts a new chat; a short tap opens the list', async ({ page }) => {
+  await page.goto('/');
+  const agent = page.getByRole('navigation', { name: 'Hauptnavigation' }).getByRole('link', { name: 'Chat', exact: true });
+
+  await agent.click();
+  await expect(page).toHaveURL(/\/chat$/);
+  await expect(page.getByRole('heading', { name: 'Chat', level: 1 })).toBeVisible();
+
+  await page.goto('/');
+  const box = (await agent.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await expect(page).toHaveURL(/\/chat\?neu$/);
+  await page.mouse.up();
+  await expect(page).toHaveURL(/\/chat\?neu$/);
+  await expect(page.getByLabel('Nachricht')).toBeFocused();
 });
