@@ -118,7 +118,7 @@ function decodeText(body: Buffer, contentType: string | undefined): string {
   }
 }
 
-function requestOnce(url: URL, options: FetchOptions): Promise<FetchResult> {
+function requestOnce(url: URL, options: FetchOptions, deadline: number): Promise<FetchResult> {
   const client = url.protocol === 'https:' ? https : http;
   return new Promise((resolve, reject) => {
     const req = client.request(
@@ -168,7 +168,12 @@ function requestOnce(url: URL, options: FetchOptions): Promise<FetchResult> {
         res.on('error', (error) => reject(error));
       },
     );
-    req.setTimeout(options.timeoutMs, () => req.destroy(new FetchError('timeout', 'Request timed out')));
+    // Wall-clock deadline (not an idle timeout), so a slow-drip response cannot hold the refresh lock.
+    const timer = setTimeout(() => {
+      reject(new FetchError('timeout', 'Request timed out'));
+      req.destroy();
+    }, Math.max(0, deadline - Date.now()));
+    req.on('close', () => clearTimeout(timer));
     req.on('error', (error: NodeJS.ErrnoException) => {
       if (error instanceof FetchError) reject(error);
       else if (error.code === 'EBLOCKED') reject(new FetchError('blocked', 'Address not allowed'));
@@ -180,8 +185,8 @@ function requestOnce(url: URL, options: FetchOptions): Promise<FetchResult> {
 
 /**
  * GET with SSRF protection: only `http`/`https`, DNS checked on every hop
- * (private ranges blocked unless `allowPrivate`), bounded redirects, timeout
- * and response size cap.
+ * (private ranges blocked unless `allowPrivate`), bounded redirects, a total
+ * timeout across all hops and a response size cap.
  */
 export const safeFetch: Fetcher = async (input, options) => {
   let url: URL;
@@ -190,6 +195,7 @@ export const safeFetch: Fetcher = async (input, options) => {
   } catch {
     throw new FetchError('scheme', 'Invalid URL');
   }
+  const deadline = Date.now() + options.timeoutMs;
   const maxRedirects = options.maxRedirects ?? 5;
   for (let hop = 0; ; hop++) {
     if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new FetchError('scheme', 'Only http and https are allowed');
@@ -198,7 +204,7 @@ export const safeFetch: Fetcher = async (input, options) => {
     if (net.isIP(literal) && blockedAddressReason(literal, options.allowPrivate)) {
       throw new FetchError('blocked', 'Address not allowed');
     }
-    const result = await requestOnce(url, options);
+    const result = await requestOnce(url, options, deadline);
     const location = result.headers.location;
     if ([301, 302, 303, 307, 308].includes(result.status) && location) {
       if (hop >= maxRedirects) throw new FetchError('redirects', 'Too many redirects');

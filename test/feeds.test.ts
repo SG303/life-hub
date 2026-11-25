@@ -262,6 +262,27 @@ describe('retention', () => {
     expect(feeds.listItems({ limit: 50 }).total).toBe(3);
     expect(feeds.listItems({ unread: true }).items.map((i) => i.title)).not.toContain(items[0]!.title);
   });
+
+  it('keeps tombstones of pruned items even when the feed answered 304 for months', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-01-01T10:00:00Z'));
+    let notModified = false;
+    const { feeds } = service({ [NEWS]: () => (notModified ? { status: 304 } : newsRss(4)) });
+    const source = await feeds.addSource({ url: NEWS });
+    feeds.markAllRead();
+
+    notModified = true;
+    for (const day of ['2026-03-01', '2026-05-01', '2026-07-01', '2026-09-01']) {
+      vi.setSystemTime(new Date(`${day}T10:00:00Z`));
+      await feeds.refreshSource(source.id);
+      feeds.pruneRetention(new Date());
+    }
+    expect(feeds.listItems({ limit: 50 }).total).toBe(0);
+
+    notModified = false;
+    await feeds.refreshSource(source.id);
+    expect(feeds.listItems({ limit: 50 }).total).toBe(0);
+  });
 });
 
 describe('scheduler', () => {

@@ -132,8 +132,6 @@ const SOURCE_SELECT = `
   SELECT s.*, COUNT(i.id) AS item_count, COALESCE(SUM(i.is_read = 0), 0) AS unread_count
   FROM feed_sources s LEFT JOIN feed_items i ON i.source_id = s.id`;
 
-/** Tombstones of pruned items are kept while upstream still lists them, plus this grace period. */
-const TOMBSTONE_GRACE_DAYS = 180;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Maps fetch and parse failures to a short German message (safe to store and show). */
@@ -378,7 +376,6 @@ export class FeedService {
       });
     }
     const seen = this.db.prepare('SELECT 1 FROM feed_seen_items WHERE source_id = ? AND dedup_key = ?');
-    const touch = this.db.prepare('UPDATE feed_seen_items SET seen_at = ? WHERE source_id = ? AND dedup_key = ?');
     const insertSeen = this.db.prepare(
       'INSERT OR IGNORE INTO feed_seen_items (source_id, dedup_key, seen_at) VALUES (?, ?, ?)',
     );
@@ -392,10 +389,7 @@ export class FeedService {
       const key = dedupKey(item);
       if (keys.has(key)) continue;
       keys.add(key);
-      if (seen.get(sourceId, key)) {
-        touch.run(now, sourceId, key);
-        continue;
-      }
+      if (seen.get(sourceId, key)) continue;
       const read = firstSubscribe && inserted >= this.config.firstSubscribeUnread ? 1 : 0;
       insertItem.run(sourceId, key, item.title, item.link, item.summary, item.publishedAt, now, read);
       insertSeen.run(sourceId, key, now);
@@ -497,21 +491,14 @@ export class FeedService {
 
   /**
    * Deletes read, non-bookmarked items fetched more than `retentionDays` ago.
-   * Their tombstones stay, so they are never re-inserted as unread.
+   * Their tombstones stay until the source is deleted, so they are never re-inserted as unread.
    */
-  pruneRetention(now: Date = new Date()): { items: number; tombstones: number } {
+  pruneRetention(now: Date = new Date()): { items: number } {
     const cutoff = new Date(now.getTime() - this.config.retentionDays * DAY_MS).toISOString();
     const items = this.db
       .prepare('DELETE FROM feed_items WHERE is_read = 1 AND is_bookmarked = 0 AND fetched_at < ?')
       .run(cutoff).changes;
-    const tombstoneCutoff = new Date(now.getTime() - TOMBSTONE_GRACE_DAYS * DAY_MS).toISOString();
-    const tombstones = this.db
-      .prepare(
-        `DELETE FROM feed_seen_items WHERE seen_at < ? AND NOT EXISTS (
-           SELECT 1 FROM feed_items i WHERE i.source_id = feed_seen_items.source_id AND i.dedup_key = feed_seen_items.dedup_key)`,
-      )
-      .run(tombstoneCutoff).changes;
-    return { items: Number(items), tombstones: Number(tombstones) };
+    return { items: Number(items) };
   }
 
   // ---- Items ---------------------------------------------------------------

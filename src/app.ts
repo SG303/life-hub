@@ -3,7 +3,7 @@ import http from 'node:http';
 import path from 'node:path';
 import type { Config } from './config.js';
 import { backupDatabase, openDatabase, type Db } from './core/db.js';
-import { handleApi, HttpError, parseJson, readBody, Router, sendJson } from './core/http.js';
+import { handleApi, HttpError, parseJson, readBody, requestUrl, Router, sendJson } from './core/http.js';
 import { log } from './core/log.js';
 import {
   ipMatcher,
@@ -31,6 +31,13 @@ export function readVersion(): string {
   } catch {
     return '0.0.0';
   }
+}
+
+/** Last-resort boundary: a failing request must never become an unhandled rejection that ends the process. */
+function failRequest(res: http.ServerResponse, error: unknown): void {
+  log.error('request failed', { error: String(error) });
+  if (!res.headersSent) sendJson(res, 500, { error: { code: 'internal', message: 'Interner Fehler.' } });
+  else res.destroy();
 }
 
 export interface AppOverrides {
@@ -82,7 +89,11 @@ export function createApp(config: Config, overrides: AppOverrides = {}): App {
         res.end('Host nicht erlaubt (ALLOWED_HOSTS).');
         return;
       }
-      const url = new URL(req.url ?? '/', 'http://app.invalid');
+      const url = requestUrl(req, 'http://app.invalid');
+      if (!url) {
+        sendJson(res, 400, { error: { code: 'bad_request', message: 'Ungültige Anfrage.' } });
+        return;
+      }
       if (!url.pathname.startsWith('/api/')) {
         serveStatic(config.webDir, req, res, url);
         return;
@@ -109,20 +120,19 @@ export function createApp(config: Config, overrides: AppOverrides = {}): App {
         log.error('request failed', { path: url.pathname, error: String(error) });
         if (!res.headersSent) sendJson(res, 500, { error: { code: 'internal', message: 'Interner Fehler.' } });
       }
-    })();
+    })().catch((error: unknown) => failRequest(res, error));
   });
 
-  const mcpServer = http.createServer(
-    (req, res) =>
-      void createMcpHandler({
-        tasks: tasks.service,
-        feeds: feeds.service,
-        token: config.mcpAuthToken,
-        allowedOrigins: config.mcpAllowedOrigins,
-        exposeTaskNotes: config.mcpExposeTaskNotes,
-        version,
-      })(req, res),
-  );
+  const mcpServer = http.createServer((req, res) => {
+    createMcpHandler({
+      tasks: tasks.service,
+      feeds: feeds.service,
+      token: config.mcpAuthToken,
+      allowedOrigins: config.mcpAllowedOrigins,
+      exposeTaskNotes: config.mcpExposeTaskNotes,
+      version,
+    })(req, res).catch((error: unknown) => failRequest(res, error));
+  });
 
   let backupTimer: NodeJS.Timeout | undefined;
   const backup = () => {

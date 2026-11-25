@@ -147,6 +147,14 @@ describe('UI/API hardening', () => {
     }
   });
 
+  it('answers malformed request targets with 400 instead of crashing (UI and MCP port)', async () => {
+    for (const server of [app.uiServer, app.mcpServer]) {
+      const res = await request(port(server), { path: '//', headers: { Host: 'localhost' } });
+      expect(res.status).toBe(400);
+    }
+    expect((await request(p, { path: '/api/v1/health', headers: { Host: 'hub.example' } })).status).toBe(200);
+  });
+
   it('returns German JSON errors for unknown routes and invalid input', async () => {
     const res = await request(p, { path: '/api/v1/nope', headers: { Host: 'hub.example' } });
     expect(res.status).toBe(404);
@@ -192,6 +200,11 @@ describe('SSRF protection', () => {
         res.end();
       } else if (req.url === '/big') {
         res.end('x'.repeat(20_000));
+      } else if (req.url === '/slow') {
+        // Slow drip: one byte every 50 ms keeps an idle timeout from ever firing.
+        res.writeHead(200);
+        const timer = setInterval(() => res.write('x'), 50);
+        res.on('close', () => clearInterval(timer));
       } else {
         res.end('<rss/>');
       }
@@ -231,5 +244,13 @@ describe('SSRF protection', () => {
     await expect(safeFetch(`http://127.0.0.1:${p}/redirect-loop`, allowed)).rejects.toMatchObject({ reason: 'redirects' });
     await expect(safeFetch(`http://127.0.0.1:${p}/big`, allowed)).rejects.toMatchObject({ reason: 'too_large' });
     await expect(safeFetch('file:///etc/passwd', allowed)).rejects.toMatchObject({ reason: 'scheme' });
+  });
+
+  it('enforces a total deadline, not just an idle timeout', async () => {
+    const started = Date.now();
+    await expect(safeFetch(`http://127.0.0.1:${p}/slow`, { ...options, allowPrivate: true, timeoutMs: 300 })).rejects.toMatchObject({
+      reason: 'timeout',
+    });
+    expect(Date.now() - started).toBeLessThan(2000);
   });
 });
