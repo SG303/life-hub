@@ -37,12 +37,34 @@ export interface ThreadPatch {
   autoSettle?: boolean;
 }
 
+export interface ToolTraceStep {
+  id: string;
+  tool: string;
+  label: string;
+  status: 'running' | 'done' | 'error';
+  source: 'mcp' | 'agent';
+}
+
 export interface ChatMessage {
   id: number;
   threadId: number;
   role: MessageRole;
   content: string;
+  toolTrace: ToolTraceStep[];
   createdAt: string;
+}
+
+export type TurnEvent =
+  | { type: 'snapshot'; text: string; steps: ToolTraceStep[] }
+  | { type: 'delta'; text: string }
+  | { type: 'tool'; step: ToolTraceStep }
+  | { type: 'done'; thread: ChatThread; messages: ChatMessage[] };
+
+export interface McpToolUpdate {
+  id: string;
+  tool: string;
+  label: string;
+  status: 'running' | 'done' | 'error';
 }
 
 /** Read access to the items an `Agent fragen` snapshot can be built from. Wired in by the app. */
@@ -80,11 +102,63 @@ interface MessageRow {
   thread_id: number;
   role: MessageRole;
   content: string;
+  tool_trace: string | null;
   created_at: string;
 }
 
+interface ActiveTurn {
+  promise: Promise<void>;
+  text: string;
+  steps: ToolTraceStep[];
+  listeners: Set<(event: TurnEvent) => void>;
+}
+
+const MAX_TOOL_STEPS = 50;
+
+const KNOWN_TOOL_LABELS: Record<string, string> = {
+  list_tasks: 'Aufgaben abfragen',
+  get_task: 'Aufgabe lesen',
+  list_feed_items: 'Feeds abfragen',
+  get_feed_item: 'Feed-Eintrag lesen',
+  search: 'In Life Hub suchen',
+};
+
 function cut(text: string, max: number): string {
   return text.length <= max ? text : text.slice(0, max - 1).trimEnd() + '…';
+}
+
+function normalizeAgentTool(raw: string): { tool: string; label: string } {
+  const cleaned = raw.replace(/\s+/g, ' ').trim();
+  const known = Object.keys(KNOWN_TOOL_LABELS).find(
+    (name) =>
+      cleaned === name ||
+      cleaned.endsWith(`__${name}`) ||
+      cleaned.endsWith(`:${name}`) ||
+      cleaned.endsWith(`.${name}`) ||
+      new RegExp(`life[-_]hub[-_]${name}$`, 'i').test(cleaned),
+  );
+  if (known) return { tool: known, label: KNOWN_TOOL_LABELS[known]! };
+  return { tool: cut(cleaned, 60), label: `Werkzeug: ${cut(cleaned, 60)}` };
+}
+
+function parseToolTrace(raw: string | null): ToolTraceStep[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (step): step is ToolTraceStep =>
+        typeof step === 'object' &&
+        step !== null &&
+        typeof (step as ToolTraceStep).id === 'string' &&
+        typeof (step as ToolTraceStep).tool === 'string' &&
+        typeof (step as ToolTraceStep).label === 'string' &&
+        ((step as ToolTraceStep).status === 'running' || (step as ToolTraceStep).status === 'done' || (step as ToolTraceStep).status === 'error') &&
+        ((step as ToolTraceStep).source === 'mcp' || (step as ToolTraceStep).source === 'agent'),
+    );
+  } catch {
+    return [];
+  }
 }
 
 const FEED_TYPE_LABEL: Record<string, string> = { news: 'News', video: 'Video', podcast: 'Podcast' };
@@ -94,7 +168,8 @@ export class ChatService {
   private readonly agent: AgentClient;
   private readonly config: AgentConfig;
   private readonly context: ChatContextProvider;
-  private readonly inFlight = new Map<number, Promise<void>>();
+  private readonly inFlight = new Map<number, ActiveTurn>();
+  private agentToolSeq = 0;
 
   constructor(db: Db, agent: AgentClient, config: AgentConfig, context: ChatContextProvider) {
     this.db = db;
@@ -195,6 +270,7 @@ export class ChatService {
       threadId: row.thread_id,
       role: row.role,
       content: row.content,
+      toolTrace: parseToolTrace(row.tool_trace),
       createdAt: row.created_at,
     }));
   }
@@ -252,12 +328,14 @@ export class ChatService {
     this.db.prepare('DELETE FROM chat_threads WHERE id = ?').run(id);
   }
 
-  private insertMessage(threadId: number, role: MessageRole, content: string): void {
+  private insertMessage(threadId: number, role: MessageRole, content: string, toolTrace: ToolTraceStep[] = []): void {
     const now = nowIso();
-    this.db.prepare('INSERT INTO chat_messages (thread_id, role, content, created_at) VALUES (?, ?, ?, ?)').run(
+    const serializedTrace = toolTrace.length > 0 ? JSON.stringify(toolTrace) : null;
+    this.db.prepare('INSERT INTO chat_messages (thread_id, role, content, tool_trace, created_at) VALUES (?, ?, ?, ?, ?)').run(
       threadId,
       role,
       content,
+      serializedTrace,
       now,
     );
     // Any new message brings a snoozed or settled thread back to «Aktiv».
@@ -267,10 +345,13 @@ export class ChatService {
   }
 
   /**
-   * Stores the user message first, then asks the agent. The turn keeps running
-   * if the HTTP client disconnects, so the reply is persisted either way.
+   * Stores the user message and kicks off the agent turn without waiting for
+   * completion, so streaming clients can subscribe immediately.
    */
-  async send(threadId: number, input: { content: string; context?: { type: ContextType; id: number } }): Promise<void> {
+  startSend(
+    threadId: number,
+    input: { content: string; context?: { type: ContextType; id: number } },
+  ): { thread: ChatThread; messages: ChatMessage[] } {
     const thread = this.requireThread(threadId);
     if (thread.pending) throw new HttpError(409, 'turn_in_progress', 'Der Agent antwortet noch.');
     let content = cut(input.content, CHAT_LIMITS.message);
@@ -281,11 +362,21 @@ export class ChatService {
       }
       this.insertMessage(threadId, 'user', content);
     });
-    await this.runTurn(threadId);
+    this.runTurn(threadId);
+    return { thread: this.requireThread(threadId), messages: this.messages(threadId) };
   }
 
-  /** Removes a trailing error and asks the agent again for the last user message. */
-  async retry(threadId: number): Promise<void> {
+  /**
+   * Stores the user message first, then asks the agent. The turn keeps running
+   * if the HTTP client disconnects, so the reply is persisted either way.
+   */
+  async send(threadId: number, input: { content: string; context?: { type: ContextType; id: number } }): Promise<void> {
+    this.startSend(threadId, input);
+    await this.inFlight.get(threadId)?.promise;
+  }
+
+  /** Removes trailing errors and starts the agent turn without waiting for completion. */
+  startRetry(threadId: number): { thread: ChatThread; messages: ChatMessage[] } {
     const thread = this.requireThread(threadId);
     if (thread.pending) throw new HttpError(409, 'turn_in_progress', 'Der Agent antwortet noch.');
     const messages = this.messages(threadId);
@@ -294,7 +385,76 @@ export class ChatService {
     const lastReal = messages.filter((message) => message.role !== 'error').at(-1);
     if (!lastReal || lastReal.role !== 'user') throw new HttpError(409, 'nothing_to_retry', 'Keine Nachricht zum Wiederholen.');
     for (const id of trailingErrors) this.db.prepare('DELETE FROM chat_messages WHERE id = ?').run(id);
-    await this.runTurn(threadId);
+    this.runTurn(threadId);
+    return { thread: this.requireThread(threadId), messages: this.messages(threadId) };
+  }
+
+  /** Removes a trailing error and asks the agent again for the last user message. */
+  async retry(threadId: number): Promise<void> {
+    this.startRetry(threadId);
+    await this.inFlight.get(threadId)?.promise;
+  }
+
+  /**
+   * Records a live MCP tool invocation from Life Hub's own MCP server.
+   * Attributes new calls only when exactly one chat turn is active, avoiding
+   * cross-thread misattribution during concurrent turns.
+   */
+  recordMcpTool(event: McpToolUpdate): void {
+    const step: ToolTraceStep = {
+      id: event.id,
+      tool: event.tool,
+      label: cut(event.label, 140),
+      status: event.status,
+      source: 'mcp',
+    };
+    for (const active of this.inFlight.values()) {
+      const idx = active.steps.findIndex((existing) => existing.id === step.id);
+      if (idx >= 0) {
+        active.steps[idx] = step;
+        this.emit(active, { type: 'tool', step });
+        return;
+      }
+    }
+    if (this.inFlight.size !== 1) return;
+    const active = this.inFlight.values().next().value!;
+    const agentIdx = active.steps.findIndex((existing) => existing.source === 'agent' && existing.tool === step.tool && existing.status === 'running');
+    if (agentIdx >= 0) {
+      active.steps[agentIdx] = step;
+    } else if (active.steps.length < MAX_TOOL_STEPS) {
+      active.steps.push(step);
+    } else {
+      return;
+    }
+    this.emit(active, { type: 'tool', step });
+  }
+
+  /**
+   * Subscribes to live events for a thread's active turn, immediately replaying
+   * the current snapshot (or emitting `done` if the turn already finished).
+   */
+  subscribe(threadId: number, listener: (event: TurnEvent) => void): () => void {
+    const thread = this.requireThread(threadId);
+    const active = this.inFlight.get(threadId);
+    if (!active) {
+      listener({ type: 'done', thread, messages: this.messages(threadId) });
+      return () => {};
+    }
+    listener({ type: 'snapshot', text: active.text, steps: [...active.steps] });
+    active.listeners.add(listener);
+    return () => {
+      active.listeners.delete(listener);
+    };
+  }
+
+  private emit(active: ActiveTurn, event: TurnEvent): void {
+    for (const listener of [...active.listeners]) {
+      try {
+        listener(event);
+      } catch {
+        // Ignore a failing listener so other subscribers and the turn keep running.
+      }
+    }
   }
 
   /** History sent upstream: user/assistant only, newest first within message and character budgets. */
@@ -316,10 +476,39 @@ export class ChatService {
   }
 
   private runTurn(threadId: number): Promise<void> {
+    const active: ActiveTurn = {
+      promise: Promise.resolve(),
+      text: '',
+      steps: [],
+      listeners: new Set(),
+    };
     const turn = (async () => {
       try {
-        const reply = await this.agent.complete(this.history(threadId));
-        if (this.threadExists(threadId)) this.insertMessage(threadId, 'assistant', cut(reply, CHAT_LIMITS.reply));
+        const reply = await this.agent.stream(this.history(threadId), {
+          onDelta: (chunk) => {
+            const room = CHAT_LIMITS.reply - active.text.length;
+            if (room <= 0) return;
+            const accepted = chunk.length <= room ? chunk : chunk.slice(0, room);
+            active.text += accepted;
+            this.emit(active, { type: 'delta', text: accepted });
+          },
+          onTool: (rawName) => {
+            const { tool, label } = normalizeAgentTool(rawName);
+            if (active.steps.some((existing) => existing.source === 'mcp' && existing.tool === tool)) return;
+            if (active.steps.length >= MAX_TOOL_STEPS) return;
+            const step: ToolTraceStep = {
+              id: `agent-${Date.now()}-${++this.agentToolSeq}`,
+              tool,
+              label,
+              status: 'running',
+              source: 'agent',
+            };
+            active.steps.push(step);
+            this.emit(active, { type: 'tool', step });
+          },
+        });
+        const finalSteps = active.steps.map((step) => (step.status === 'running' ? { ...step, status: 'done' as const } : step));
+        if (this.threadExists(threadId)) this.insertMessage(threadId, 'assistant', cut(reply, CHAT_LIMITS.reply), finalSteps);
       } catch (error) {
         const agentError = error instanceof AgentError ? error : new AgentError('invalid');
         if (agentError.reason === 'timeout' || agentError.reason === 'unreachable') this.agent.markUnreachable();
@@ -327,9 +516,14 @@ export class ChatService {
         if (this.threadExists(threadId)) this.insertMessage(threadId, 'error', agentError.userMessage);
       } finally {
         this.inFlight.delete(threadId);
+        if (this.threadExists(threadId)) {
+          this.emit(active, { type: 'done', thread: this.requireThread(threadId), messages: this.messages(threadId) });
+        }
+        active.listeners.clear();
       }
     })();
-    this.inFlight.set(threadId, turn);
+    active.promise = turn;
+    this.inFlight.set(threadId, active);
     return turn;
   }
 
@@ -339,6 +533,6 @@ export class ChatService {
 
   /** Waits for all running turns, e.g. before shutdown or in tests. */
   async idle(): Promise<void> {
-    await Promise.all([...this.inFlight.values()]);
+    await Promise.all([...this.inFlight.values()].map((active) => active.promise));
   }
 }

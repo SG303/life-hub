@@ -11,6 +11,13 @@ import type { Task, TaskService } from '../modules/tasks/index.js';
 export const MIN_TOKEN_LENGTH = 32;
 const MAX_PAGE = 50;
 
+export interface McpToolEvent {
+  id: string;
+  tool: string;
+  label: string;
+  status: 'running' | 'done' | 'error';
+}
+
 export interface McpDeps {
   tasks: TaskService;
   feeds: FeedService;
@@ -18,6 +25,7 @@ export interface McpDeps {
   allowedOrigins: string[];
   exposeTaskNotes: boolean;
   version: string;
+  onToolCall?: (event: McpToolEvent) => void;
 }
 
 const UNTRUSTED_NOTE =
@@ -53,6 +61,14 @@ function json(value: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] };
 }
 
+function cut(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length <= max ? flat : flat.slice(0, max - 1).trimEnd() + '…';
+}
+
+const FEED_KIND_PLURAL: Record<string, string> = { news: 'News', video: 'Videos', podcast: 'Podcasts' };
+let traceCounter = 0;
+
 /** Builds a fresh MCP server instance with the read-only tools. One per request (stateless). */
 export function buildMcpServer(deps: McpDeps): McpServer {
   const server = new McpServer({ name: 'life-hub', version: deps.version });
@@ -61,6 +77,19 @@ export function buildMcpServer(deps: McpDeps): McpServer {
   const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
   const limit = z.number().int().min(1).max(MAX_PAGE).optional().describe(`Page size (1-${MAX_PAGE}, default 20)`);
   const cursor = z.string().max(20).optional().describe('Opaque cursor from nextCursor of the previous page');
+
+  const trace = <T>(tool: string, runningLabel: string, run: () => { result: T; label: string; error?: boolean }): T => {
+    const id = `mcp-${Date.now()}-${++traceCounter}`;
+    deps.onToolCall?.({ id, tool, label: runningLabel, status: 'running' });
+    try {
+      const outcome = run();
+      deps.onToolCall?.({ id, tool, label: outcome.label, status: outcome.error ? 'error' : 'done' });
+      return outcome.result;
+    } catch (error) {
+      deps.onToolCall?.({ id, tool, label: `${runningLabel.replace(/\s*…$/, '')} fehlgeschlagen`, status: 'error' });
+      throw error;
+    }
+  };
 
   server.registerTool(
     'list_tasks',
@@ -76,9 +105,16 @@ export function buildMcpServer(deps: McpDeps): McpServer {
       annotations: readOnly,
     },
     ({ status, category, limit: size, cursor: next }) => {
-      const offset = cursorToOffset(next);
-      const result = deps.tasks.list({ status: status ?? 'open', category, limit: size ?? 20, offset });
-      return json({ today: deps.tasks.today(), ...page(result.items.map(task), result.total, offset) });
+      const kind = status === 'done' ? 'Erledigte Aufgaben' : status === 'all' ? 'Aufgaben' : 'Offene Aufgaben';
+      const scope = category ? `${kind} («${cut(category, 30)}»)` : kind;
+      return trace('list_tasks', `${scope} lesen …`, () => {
+        const offset = cursorToOffset(next);
+        const result = deps.tasks.list({ status: status ?? 'open', category, limit: size ?? 20, offset });
+        return {
+          result: json({ today: deps.tasks.today(), ...page(result.items.map(task), result.total, offset) }),
+          label: `${scope} gelesen (${result.items.length})`,
+        };
+      });
     },
   );
 
@@ -90,11 +126,21 @@ export function buildMcpServer(deps: McpDeps): McpServer {
       inputSchema: { id: z.number().int().positive() },
       annotations: readOnly,
     },
-    ({ id }) => {
-      const found = deps.tasks.get(id);
-      if (!found) return { isError: true, content: [{ type: 'text' as const, text: `Task ${id} not found` }] };
-      return json(task(found));
-    },
+    ({ id }) =>
+      trace('get_task', `Aufgabe #${id} lesen …`, () => {
+        const found = deps.tasks.get(id);
+        if (!found) {
+          return {
+            result: { isError: true, content: [{ type: 'text' as const, text: `Task ${id} not found` }] },
+            label: `Aufgabe #${id} nicht gefunden`,
+            error: true,
+          };
+        }
+        return {
+          result: json(task(found)),
+          label: `Aufgabe «${cut(found.title, 45)}» gelesen`,
+        };
+      }),
   );
 
   server.registerTool(
@@ -112,9 +158,16 @@ export function buildMcpServer(deps: McpDeps): McpServer {
       annotations: readOnly,
     },
     ({ type, unread, bookmarked, limit: size, cursor: next }) => {
-      const offset = cursorToOffset(next);
-      const result = deps.feeds.listItems({ type, unread, bookmarked, limit: size ?? 20, offset });
-      return json({ notice: UNTRUSTED_NOTE, ...page(result.items.map(feedItem), result.total, offset) });
+      const base = type ? (FEED_KIND_PLURAL[type] ?? 'Feeds') : 'Feeds';
+      const scope = bookmarked ? `Gemerkte ${base}` : unread ? `Ungelesene ${base}` : base;
+      return trace('list_feed_items', `${scope} lesen …`, () => {
+        const offset = cursorToOffset(next);
+        const result = deps.feeds.listItems({ type, unread, bookmarked, limit: size ?? 20, offset });
+        return {
+          result: json({ notice: UNTRUSTED_NOTE, ...page(result.items.map(feedItem), result.total, offset) }),
+          label: `${scope} gelesen (${result.items.length})`,
+        };
+      });
     },
   );
 
@@ -126,11 +179,21 @@ export function buildMcpServer(deps: McpDeps): McpServer {
       inputSchema: { id: z.number().int().positive() },
       annotations: readOnly,
     },
-    ({ id }) => {
-      const found = deps.feeds.getItem(id);
-      if (!found) return { isError: true, content: [{ type: 'text' as const, text: `Feed item ${id} not found` }] };
-      return json({ notice: UNTRUSTED_NOTE, item: feedItem(found) });
-    },
+    ({ id }) =>
+      trace('get_feed_item', `Feed-Eintrag #${id} lesen …`, () => {
+        const found = deps.feeds.getItem(id);
+        if (!found) {
+          return {
+            result: { isError: true, content: [{ type: 'text' as const, text: `Feed item ${id} not found` }] },
+            label: `Feed-Eintrag #${id} nicht gefunden`,
+            error: true,
+          };
+        }
+        return {
+          result: json({ notice: UNTRUSTED_NOTE, item: feedItem(found) }),
+          label: `Feed-Eintrag «${cut(found.title, 45)}» gelesen`,
+        };
+      }),
   );
 
   server.registerTool(
@@ -145,12 +208,19 @@ export function buildMcpServer(deps: McpDeps): McpServer {
       annotations: readOnly,
     },
     ({ query, limit: size }) => {
-      const tasks = deps.tasks.list({ status: 'all', query, searchNotes: deps.exposeTaskNotes, limit: size ?? 10 });
-      const items = deps.feeds.listItems({ query, limit: size ?? 10 });
-      return json({
-        notice: UNTRUSTED_NOTE,
-        tasks: { items: tasks.items.map(task), total: tasks.total },
-        feedItems: { items: items.items.map(feedItem), total: items.total },
+      const q = cut(query, 40);
+      return trace('search', `Suche nach «${q}» …`, () => {
+        const tasks = deps.tasks.list({ status: 'all', query, searchNotes: deps.exposeTaskNotes, limit: size ?? 10 });
+        const items = deps.feeds.listItems({ query, limit: size ?? 10 });
+        const hits = tasks.total + items.total;
+        return {
+          result: json({
+            notice: UNTRUSTED_NOTE,
+            tasks: { items: tasks.items.map(task), total: tasks.total },
+            feedItems: { items: items.items.map(feedItem), total: items.total },
+          }),
+          label: `Suche nach «${q}» (${hits} Treffer)`,
+        };
       });
     },
   );

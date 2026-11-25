@@ -64,11 +64,20 @@ export interface ThreadPatch {
   autoSettle?: boolean;
 }
 
+export interface ToolTraceStep {
+  id: string;
+  tool: string;
+  label: string;
+  status: 'running' | 'done' | 'error';
+  source: 'mcp' | 'agent';
+}
+
 export interface ChatMessage {
   id: number;
   threadId: number;
   role: 'user' | 'assistant' | 'error';
   content: string;
+  toolTrace: ToolTraceStep[];
   createdAt: string;
 }
 
@@ -154,5 +163,60 @@ export const api = {
   deleteThread: (id: number) => request<void>('DELETE', `/chat/threads/${id}`),
   send: (id: number, content: string, context?: ChatContext) =>
     request<{ thread: ChatThread; messages: ChatMessage[] }>('POST', `/chat/threads/${id}/messages`, { content, context }),
+  startSend: (id: number, content: string, context?: ChatContext) =>
+    request<{ thread: ChatThread; messages: ChatMessage[] }>('POST', `/chat/threads/${id}/messages`, { content, context, async: true }),
   retry: (id: number) => request<{ thread: ChatThread; messages: ChatMessage[] }>('POST', `/chat/threads/${id}/retry`, {}),
+  startRetry: (id: number) => request<{ thread: ChatThread; messages: ChatMessage[] }>('POST', `/chat/threads/${id}/retry`, { async: true }),
+  streamThread: (
+    id: number,
+    handlers: {
+      onSnapshot: (text: string, steps: ToolTraceStep[]) => void;
+      onDelta: (text: string) => void;
+      onTool: (step: ToolTraceStep) => void;
+      onDone: (state: { thread: ChatThread; messages: ChatMessage[] }) => void;
+      onDisconnect?: () => void;
+    },
+  ): (() => void) => {
+    const source = new EventSource(`/api/v1/chat/threads/${id}/stream`);
+    let closed = false;
+    const stop = () => {
+      if (closed) return;
+      closed = true;
+      source.close();
+    };
+    const on = (type: string, fn: (data: unknown) => void) => {
+      source.addEventListener(type, (event) => {
+        if (closed) return;
+        try {
+          fn(JSON.parse((event as MessageEvent<string>).data));
+        } catch {
+          // ignore malformed frame
+        }
+      });
+    };
+    on('snapshot', (data) => {
+      const payload = data as { text: string; steps: ToolTraceStep[] };
+      handlers.onSnapshot(payload.text, payload.steps);
+    });
+    on('delta', (data) => {
+      const payload = data as { text: string };
+      handlers.onDelta(payload.text);
+    });
+    on('tool', (data) => {
+      const payload = data as { step: ToolTraceStep };
+      handlers.onTool(payload.step);
+    });
+    on('done', (data) => {
+      stop();
+      handlers.onDone(data as { thread: ChatThread; messages: ChatMessage[] });
+    });
+    source.onerror = () => {
+      if (closed) return;
+      if (source.readyState === EventSource.CLOSED) {
+        stop();
+        handlers.onDisconnect?.();
+      }
+    };
+    return stop;
+  },
 };

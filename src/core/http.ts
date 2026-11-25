@@ -26,15 +26,28 @@ export interface ApiReply {
   readonly isReply: true;
 }
 
-/** Return value of a handler: a JSON body (status 200) or an explicit `reply()`. */
+export interface ApiStreamReply {
+  readonly isStream: true;
+  write(req: IncomingMessage, res: ServerResponse): void | Promise<void>;
+}
+
+/** Return value of a handler: a JSON body (status 200), an explicit `reply()`, or a `streamReply()`. */
 export type ApiHandler = (req: ApiRequest) => unknown;
 
 export function reply(status: number, body?: unknown): ApiReply {
   return { status, body, isReply: true };
 }
 
+export function streamReply(write: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>): ApiStreamReply {
+  return { isStream: true, write };
+}
+
 function isReply(value: unknown): value is ApiReply {
   return typeof value === 'object' && value !== null && (value as ApiReply).isReply === true;
+}
+
+function isStreamReply(value: unknown): value is ApiStreamReply {
+  return typeof value === 'object' && value !== null && (value as ApiStreamReply).isStream === true;
 }
 
 interface Route {
@@ -165,11 +178,12 @@ export async function handleApi(
     if (match === undefined) throw new HttpError(404, 'not_found', 'Not found');
     if (match === 'method') throw new HttpError(405, 'method_not_allowed', 'Method not allowed');
     const result = await match.handler({ method, path: url.pathname, params: match.params, query: url.searchParams, body });
-    if (isReply(result)) sendJson(res, result.status, result.body);
+    if (isStreamReply(result)) await result.write(req, res);
+    else if (isReply(result)) sendJson(res, result.status, result.body);
     else sendJson(res, 200, result);
   } catch (error) {
     if (error instanceof HttpError) {
-      sendJson(res, error.status, { error: { code: error.code, message: error.message } });
+      if (!res.headersSent) sendJson(res, error.status, { error: { code: error.code, message: error.message } });
     } else {
       throw error;
     }

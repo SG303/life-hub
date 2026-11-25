@@ -177,6 +177,16 @@ export async function startHarness(mode: AppMode, image = 'life-hub:test'): Prom
       try {
         if (req.method === 'POST' && url.pathname === '/__control/agent/stop') return ok(await stopAgent());
         if (req.method === 'POST' && url.pathname === '/__control/agent/start') return ok(await startAgent());
+        if (req.method === 'POST' && url.pathname === '/__control/agent/mode') {
+          let raw = '';
+          for await (const chunk of req) raw += chunk;
+          agent.setMode(raw.trim() ? (JSON.parse(raw) as { mode?: 'sse' | 'json' | 'fail-mid-stream'; hold?: boolean }) : { mode: 'sse', hold: false });
+          return ok();
+        }
+        if (req.method === 'POST' && url.pathname === '/__control/agent/release') {
+          agent.release();
+          return ok();
+        }
         if (req.method === 'POST' && url.pathname === '/__control/app/restart') return ok(await app?.restart());
         if (url.pathname === '/__control/agent/turns') return ok(agent.turns);
         if (url.pathname === '/__control/info') return ok({ fixturesForApp, mode });

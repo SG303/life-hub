@@ -26,6 +26,7 @@ async function send(page: Page, text: string): Promise<void> {
 
 test.afterEach(async () => {
   await control('/agent/start');
+  await control('/agent/mode', { mode: 'sse', hold: false });
 });
 
 test('Agent fragen on a task and a feed item; the agent reads live data over MCP; replies are sanitized and persist', async ({
@@ -217,4 +218,90 @@ test('a long press on the agent button starts a new chat; a short tap opens the 
   await page.mouse.up();
   await expect(page).toHaveURL(/\/chat\?neu$/);
   await expect(page.getByLabel('Nachricht')).toBeFocused();
+});
+
+test('streams replies live with MCP tool trace, reconnects on reload and chat switch, and persists collapsed trace', async ({
+  page,
+  request,
+}, info) => {
+  const tag = `${info.project.name}-${Date.now()}`;
+  const client = api(request);
+  const other = await client.post<{ id: number }>('/chat/threads', {});
+  await client.post(`/chat/threads/${other.id}/messages`, { content: `Nebenthema ${tag}` });
+  const foreign = watchForeignRequests(page);
+
+  await control('/agent/mode', { mode: 'sse', hold: true });
+  await page.goto('/chat?neu');
+  await send(page, `Stream-Test ${tag}`);
+
+  // Before the agent finishes: live tool trace and first streamed chunk are visible.
+  const liveTrace = page.getByTestId('live-tool-trace');
+  await expect(liveTrace).toContainText('Offene Aufgaben gelesen');
+  await expect(liveTrace).toContainText('Feeds gelesen');
+  const streaming = page.getByTestId('message-assistant-streaming');
+  await expect(streaming).toContainText('Antwort vom Test-Agenten.');
+  await expect(streaming).not.toContainText('Deine Nachricht beginnt mit:');
+
+  // Reloading mid-stream reconnects and still shows the ongoing draft and live tool trace.
+  await page.reload();
+  await expect(page.getByTestId('live-tool-trace')).toContainText('Offene Aufgaben gelesen');
+  await expect(page.getByTestId('message-assistant-streaming')).toContainText('Antwort vom Test-Agenten.');
+
+  // Switching to another chat mid-stream does not leak chunks; returning reconnects cleanly.
+  const activeUrl = page.url();
+  await toChatList(page);
+  await page.locator(`a[href="/chat?thread=${other.id}"]`).click();
+  await expect(page.getByTestId('message-user').first()).toContainText(`Nebenthema ${tag}`);
+  await expect(page.getByTestId('message-assistant-streaming')).toHaveCount(0);
+  await page.goto(activeUrl);
+  await expect(page.getByTestId('message-assistant-streaming')).toContainText('Antwort vom Test-Agenten.');
+
+  // Release stream -> completes with full sanitized reply and collapsed persisted tool trace.
+  await control('/agent/release');
+  const reply = page.getByTestId('message-assistant').last();
+  await expect(reply).toContainText('Deine Nachricht beginnt mit: «Stream-Test');
+  await expect(page.getByTestId('message-assistant-streaming')).toHaveCount(0);
+  await expect(reply.locator('script, img')).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as { __xss?: number }).__xss)).toBeUndefined();
+
+  const trace = reply.getByTestId('tool-trace');
+  await expect(trace).toBeVisible();
+  await expect(trace).not.toHaveAttribute('open', '');
+  await trace.locator('summary').click();
+  await expect(trace).toHaveAttribute('open', '');
+  await expect(trace).toContainText('Offene Aufgaben gelesen');
+  await expect(trace).toContainText('Feeds gelesen');
+
+  // Persisted trace survives reload and starts collapsed again.
+  await page.reload();
+  const reloadedTrace = page.getByTestId('message-assistant').last().getByTestId('tool-trace');
+  await expect(reloadedTrace).toBeVisible();
+  await expect(reloadedTrace).not.toHaveAttribute('open', '');
+  await reloadedTrace.locator('summary').click();
+  await expect(reloadedTrace).toContainText('Offene Aufgaben gelesen');
+
+  expect(foreign).toEqual([]);
+});
+
+test('falls back for non-streaming agents and discards partial drafts on mid-stream failure with working retry', async ({ page }, info) => {
+  const tag = `${info.project.name}-${Date.now()}`;
+
+  // Non-streaming JSON agent fallback.
+  await control('/agent/mode', { mode: 'json', hold: false });
+  await page.goto('/chat?neu');
+  await send(page, `JSON-Fallback ${tag}`);
+  await expect(page.getByTestId('message-assistant').last()).toContainText(`JSON-Fallback ${tag}`);
+
+  // Mid-stream disconnect: partial draft is discarded, German error shown, retry succeeds.
+  await control('/agent/mode', { mode: 'fail-mid-stream', hold: false });
+  await send(page, `Abbruch-Test ${tag}`);
+  const err = page.getByTestId('message-error');
+  await expect(err).toContainText('Der Agent ist nicht erreichbar.');
+  await expect(page.getByTestId('message-assistant-streaming')).toHaveCount(0);
+  await expect(page.getByTestId('message-assistant')).toHaveCount(1);
+
+  await control('/agent/mode', { mode: 'sse', hold: false });
+  await err.getByRole('button', { name: 'Erneut versuchen' }).click();
+  await expect(page.getByTestId('message-error')).toHaveCount(0);
+  await expect(page.getByTestId('message-assistant').last()).toContainText(`Abbruch-Test ${tag}`);
 });
