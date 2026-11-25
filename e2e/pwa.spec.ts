@@ -41,3 +41,24 @@ test('shows German UI chrome without ß in every view', async ({ page, request }
   }
   await expect(page.getByRole('heading', { name: 'Mehr', level: 1 })).toBeVisible();
 });
+
+test('home-screen shortcuts open a new chat, a new task and the feeds', async ({ page, request }) => {
+  const manifest = (await (await request.get('/manifest.webmanifest')).json()) as { shortcuts: { name: string; url: string }[] };
+  const url = (name: string) => manifest.shortcuts.find((entry) => entry.name === name)!.url;
+  expect(manifest.shortcuts.map((entry) => entry.name)).toEqual(['Neuer Chat', 'Neue Aufgabe', 'Feeds']);
+
+  await page.goto(url('Neuer Chat'));
+  await expect(page.locator('#chat-input')).toBeFocused();
+
+  await page.goto(url('Neue Aufgabe'));
+  await expect(page.getByRole('form', { name: 'Neue Aufgabe' })).toBeVisible();
+  await expect(page.getByLabel('Titel')).toBeFocused();
+  // The flag is consumed, so a reload shows the plain list.
+  await expect(page).toHaveURL(/\/aufgaben$/);
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Aufgaben', level: 1 })).toBeVisible();
+  await expect(page.getByRole('form', { name: 'Neue Aufgabe' })).toBeHidden();
+
+  await page.goto(url('Feeds'));
+  await expect(page.getByRole('heading', { name: 'Feeds', level: 1 })).toBeVisible();
+});

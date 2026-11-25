@@ -3,6 +3,7 @@
   import Sheet from '../components/Sheet.svelte';
   import TaskItem from '../components/TaskItem.svelte';
   import { api, type Task } from '../lib/api';
+  import { router } from '../lib/router.svelte';
 
   type Status = 'open' | 'done' | 'all';
   const STATUS: { value: Status; label: string }[] = [
@@ -47,6 +48,13 @@
   function openCreate() {
     createError = '';
     creating = true;
+  }
+
+  // «Neue Aufgabe» from the home-screen shortcut: open the form once, then drop the flag
+  // so a reload or «Zurück» does not open it again.
+  if (router.params.has('neu')) {
+    openCreate();
+    router.go('/aufgaben', { replace: true });
   }
 
   async function create(event: SubmitEvent) {
