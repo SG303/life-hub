@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, type FeedItem } from '../lib/api';
+  import { api, type BookmarkExpiryDays, type FeedItem, type ItemStatePatch } from '../lib/api';
   import { ago, TYPE_SINGULAR } from '../lib/format';
   import { askAgent } from '../lib/router.svelte';
   import Icon from './Icon.svelte';
@@ -8,24 +8,35 @@
   let {
     item,
     compact = false,
+    bookmarkedView = false,
+    defaultExpiryDays = 14,
     swipeOpen = false,
     onswipeopen,
     onswiperight,
     ontask,
+    onrelease,
     onchange,
   }: {
     item: FeedItem;
     compact?: boolean;
+    bookmarkedView?: boolean;
+    defaultExpiryDays?: BookmarkExpiryDays;
     swipeOpen?: boolean;
     onswipeopen?: (open: boolean) => void;
     onswiperight?: (item: FeedItem) => void;
     ontask?: (item: FeedItem) => void;
+    onrelease?: (item: FeedItem) => void;
     onchange: (item: FeedItem) => void;
   } = $props();
 
   let error = $state('');
 
-  async function update(state: { read?: boolean; bookmarked?: boolean }) {
+  const expired = $derived(!compact && item.bookmarked && item.bookmarkExpired);
+  const showPermanentToggle = $derived(
+    !compact && bookmarkedView && item.bookmarked && !item.bookmarkExpired && (item.bookmarkExpiresAt !== null || defaultExpiryDays !== null),
+  );
+
+  async function update(state: ItemStatePatch) {
     error = '';
     try {
       onchange(await api.updateItem(item.id, state));
@@ -42,6 +53,7 @@
 {#snippet inner()}
   <div class="body">
     <p class="meta">
+      {#if expired}<span class="expired-badge">Abgelaufen</span>{/if}
       {#if !compact}<span class="type {item.type}">{TYPE_SINGULAR[item.type]}</span>{/if}
       <span>{item.sourceTitle}</span>
       <span>{ago(item.publishedAt ?? item.fetchedAt)}</span>
@@ -56,21 +68,54 @@
     {#if item.summary && !compact}<p class="summary">{item.summary}</p>{/if}
     {#if error}<p class="notice error" role="alert">{error}</p>{/if}
   </div>
+  {#if expired}
+    <div class="review-actions">
+      <button
+        class="button primary small"
+        type="button"
+        title={defaultExpiryDays ? `Um ${defaultExpiryDays} Tage verlängern` : 'Dauerhaft behalten'}
+        onclick={() => update({ bookmarkExpiry: 'extend' })}
+      >
+        Verlängern
+      </button>
+      <button class="button small" type="button" onclick={() => update({ bookmarkExpiry: 'permanent' })}>Dauerhaft</button>
+      <button
+        class="button small danger"
+        type="button"
+        onclick={() => (onrelease ? onrelease(item) : void update({ bookmarked: false, read: true }))}
+      >
+        Loslassen
+      </button>
+    </div>
+  {/if}
   <div class="actions">
     {#if !compact}
       <button class="button quiet" type="button" onclick={() => update({ read: !item.read })}>
         <Icon name="read" size={18} /><span>{item.read ? 'Als ungelesen markieren' : 'Als gelesen markieren'}</span>
       </button>
     {/if}
-    <button
-      class="button quiet"
-      class:marked={item.bookmarked}
-      type="button"
-      aria-pressed={item.bookmarked}
-      onclick={() => update({ bookmarked: !item.bookmarked })}
-    >
-      <Icon name="bookmark" size={18} filled={item.bookmarked} /><span>Merken</span>
-    </button>
+    {#if !expired}
+      <button
+        class="button quiet"
+        class:marked={item.bookmarked}
+        type="button"
+        aria-pressed={item.bookmarked}
+        onclick={() => update({ bookmarked: !item.bookmarked })}
+      >
+        <Icon name="bookmark" size={18} filled={item.bookmarked} /><span>Merken</span>
+      </button>
+    {/if}
+    {#if showPermanentToggle}
+      <button
+        class="button quiet keep-label"
+        class:marked={item.bookmarkExpiresAt === null}
+        type="button"
+        aria-pressed={item.bookmarkExpiresAt === null}
+        onclick={() => update({ bookmarkExpiry: item.bookmarkExpiresAt === null ? 'extend' : 'permanent' })}
+      >
+        <Icon name="pin" size={17} /><span>Dauerhaft</span>
+      </button>
+    {/if}
     {#if !compact && ontask}
       <button class="button quiet" type="button" onclick={() => ontask(item)}>
         <Icon name="tasks" size={18} /><span>Aufgabe</span>
@@ -118,7 +163,7 @@
         : []),
     ]}
   >
-    <div class="entry" class:read={item.read}>
+    <div class="entry" class:read={item.read} class:expired data-expired={expired ? 'true' : undefined}>
       {@render inner()}
     </div>
   </SwipeRow>
@@ -129,11 +174,31 @@
     padding: 0.9rem 1.25rem;
   }
 
+  .entry.expired {
+    background: var(--warn-wash);
+  }
+
   .meta {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.2rem 0.75rem;
+    align-items: center;
+    gap: 0.25rem 0.75rem;
     margin: 0 0 0.2rem;
+  }
+
+  .expired-badge {
+    padding: 0.05rem 0.55rem;
+    border-radius: 999px;
+    background: var(--badge);
+    color: var(--badge-ink);
+    font-weight: 650;
+  }
+
+  .review-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    margin-top: 0.65rem;
   }
 
   .type {
@@ -239,7 +304,7 @@
   }
 
   @media (max-width: 520px) {
-    .actions span {
+    .actions button:not(.keep-label) span {
       position: absolute;
       width: 1px;
       height: 1px;

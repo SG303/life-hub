@@ -1,5 +1,10 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { openMemoryDatabase } from '../src/core/db.ts';
+import { DB_FILE, openDatabase, openMemoryDatabase } from '../src/core/db.ts';
+import { migrations } from '../src/core/migrations.ts';
 import { FeedService } from '../src/modules/feeds/index.ts';
 import { FeedScheduler } from '../src/modules/feeds/scheduler.ts';
 import { parseOpml } from '../src/modules/feeds/opml.ts';
@@ -350,5 +355,179 @@ describe('scheduler', () => {
     vi.setSystemTime(new Date(Date.now() + 31 * 60_000));
     await feeds.refreshAll({ onlyDue: true });
     expect(fetcher.calls).toEqual([NEWS]);
+  });
+});
+
+describe('expiring bookmarks', () => {
+  it('migration v4 backfills existing bookmarks with a 14-day expiry and sets default to 14 days', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'life-hub-mig4-'));
+    try {
+      const legacy = new DatabaseSync(path.join(dir, DB_FILE));
+      for (const m of migrations.filter((m) => m.version <= 3)) {
+        legacy.exec(m.sql);
+        legacy.exec(`PRAGMA user_version = ${m.version}`);
+      }
+      legacy
+        .prepare("INSERT INTO feed_sources (title, url, type, created_at) VALUES ('News', 'https://news.example/rss', 'news', '2026-01-01T00:00:00.000Z')")
+        .run();
+      legacy
+        .prepare(
+          `INSERT INTO feed_items (source_id, dedup_key, title, summary, fetched_at, is_read, is_bookmarked)
+           VALUES (1, 'k1', 'Gemerkter Artikel', '', '2026-01-01T00:00:00.000Z', 1, 1),
+                  (1, 'k2', 'Normaler Artikel', '', '2026-01-01T00:00:00.000Z', 0, 0)`,
+        )
+        .run();
+      legacy.close();
+
+      const before = Date.now();
+      const db = openDatabase(dir);
+      const feeds = new FeedService(db, testConfig().feeds, fakeFetcher({}));
+      expect(feeds.getBookmarkSettings()).toEqual({ bookmarkExpiryDays: 14 });
+
+      const bookmarked = feeds.listItems({ bookmarked: true }).items;
+      expect(bookmarked).toHaveLength(1);
+      expect(bookmarked[0]!.bookmarkExpired).toBe(false);
+      expect(bookmarked[0]!.bookmarkExpiresAt).not.toBeNull();
+      const expiryMs = Date.parse(bookmarked[0]!.bookmarkExpiresAt!);
+      expect(expiryMs).toBeGreaterThanOrEqual(before + 13.9 * 86_400_000);
+      expect(expiryMs).toBeLessThanOrEqual(Date.now() + 14.1 * 86_400_000);
+
+      const normal = feeds.listItems().items.find((i) => i.title === 'Normaler Artikel')!;
+      expect(normal.bookmarkExpiresAt).toBeNull();
+      expect(normal.bookmarkExpired).toBe(false);
+      db.close();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('persists default expiry setting (7/14/30/null) without changing existing bookmarks', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-01T10:00:00.000Z'));
+    const { feeds } = service({ [NEWS]: newsRss(4) });
+    await feeds.addSource({ url: NEWS });
+    const [first, second, third] = feeds.listItems({ limit: 10 }).items;
+
+    expect(feeds.getBookmarkSettings()).toEqual({ bookmarkExpiryDays: 14 });
+    const b1 = feeds.setItemState(first!.id, { bookmarked: true });
+    expect(b1.bookmarkExpiresAt).toBe('2026-10-15T10:00:00.000Z');
+    expect(b1.bookmarkExpired).toBe(false);
+
+    // Changing default to 7 days affects only newly bookmarked items.
+    expect(feeds.setBookmarkSettings({ bookmarkExpiryDays: 7 })).toEqual({ bookmarkExpiryDays: 7 });
+    expect(feeds.getItem(first!.id)!.bookmarkExpiresAt).toBe('2026-10-15T10:00:00.000Z');
+    const b2 = feeds.setItemState(second!.id, { bookmarked: true });
+    expect(b2.bookmarkExpiresAt).toBe('2026-10-08T10:00:00.000Z');
+
+    // Setting default to Off creates permanent bookmarks (null expiry).
+    expect(feeds.setBookmarkSettings({ bookmarkExpiryDays: null })).toEqual({ bookmarkExpiryDays: null });
+    const b3 = feeds.setItemState(third!.id, { bookmarked: true });
+    expect(b3.bookmarkExpiresAt).toBeNull();
+    expect(b3.bookmarkExpired).toBe(false);
+
+    // Invalid value rejected.
+    expect(() => feeds.setBookmarkSettings({ bookmarkExpiryDays: 99 as unknown as 14 })).toThrow(/Ablauf-Frist/);
+  });
+
+  it('detects expiry, sorts expired first, supports extend/permanent/release/undo, and keeps expiry on read toggle', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-01T10:00:00.000Z'));
+    const { feeds } = service({ [NEWS]: newsRss(8) });
+    await feeds.addSource({ url: NEWS });
+    const items = feeds.listItems({ limit: 10 }).items;
+
+    // Bookmark 7 items: 6 expired at staggered times, 1 active.
+    for (let i = 0; i < 6; i++) {
+      feeds.setItemState(items[i]!.id, {
+        bookmarked: true,
+        bookmarkExpiry: new Date(Date.UTC(2026, 9, 10 + i, 10, 0, 0)).toISOString(),
+      });
+    }
+    feeds.setItemState(items[6]!.id, {
+      bookmarked: true,
+      bookmarkExpiry: '2026-10-30T10:00:00.000Z',
+    });
+
+    // Advance to Oct 20: first 6 are expired, 7th is active.
+    vi.setSystemTime(new Date('2026-10-20T10:00:00.000Z'));
+
+    // Opening link (marking read) must not alter bookmark expiry.
+    const opened = feeds.setItemState(items[0]!.id, { read: true });
+    expect(opened.read).toBe(true);
+    expect(opened.bookmarked).toBe(true);
+    expect(opened.bookmarkExpiresAt).toBe('2026-10-10T10:00:00.000Z');
+    expect(opened.bookmarkExpired).toBe(true);
+
+    // Bookmarked list puts expired items first (oldest-expired first), then active.
+    const listed = feeds.listItems({ bookmarked: true, limit: 20 });
+    expect(listed.total).toBe(7);
+    expect(listed.items.slice(0, 6).every((i) => i.bookmarkExpired)).toBe(true);
+    expect(listed.items[0]!.id).toBe(items[0]!.id);
+    expect(listed.items[6]!.id).toBe(items[6]!.id);
+    expect(listed.items[6]!.bookmarkExpired).toBe(false);
+
+    // Cockpit summary caps expiredBookmarks at 5 and reports total 6.
+    const cockpit = feeds.cockpitSummary(5, 5, new Date());
+    expect(cockpit.expiredBookmarks.total).toBe(6);
+    expect(cockpit.expiredBookmarks.items).toHaveLength(5);
+    expect(cockpit.expiredBookmarks.defaultExpiryDays).toBe(14);
+
+    // Extend resets expiry by default (14 days -> Nov 3).
+    const extended = feeds.setItemState(items[0]!.id, { bookmarkExpiry: 'extend' });
+    expect(extended.bookmarkExpiresAt).toBe('2026-11-03T10:00:00.000Z');
+    expect(extended.bookmarkExpired).toBe(false);
+
+    // Mark permanent clears expiry; switching back to extend re-applies expiry.
+    const perm = feeds.setItemState(items[1]!.id, { bookmarkExpiry: 'permanent' });
+    expect(perm.bookmarkExpiresAt).toBeNull();
+    expect(perm.bookmarkExpired).toBe(false);
+    const back = feeds.setItemState(items[1]!.id, { bookmarkExpiry: 'extend' });
+    expect(back.bookmarkExpiresAt).toBe('2026-11-03T10:00:00.000Z');
+
+    // Release unbookmarks & marks read; undo restores exact previous read & expiry.
+    const beforeRelease = feeds.requireItem(items[2]!.id);
+    const released = feeds.setItemState(items[2]!.id, { bookmarked: false, read: true });
+    expect(released.bookmarked).toBe(false);
+    expect(released.read).toBe(true);
+    expect(released.bookmarkExpiresAt).toBeNull();
+    const restored = feeds.setItemState(items[2]!.id, {
+      bookmarked: true,
+      read: beforeRelease.read,
+      bookmarkExpiry: beforeRelease.bookmarkExpiresAt,
+    });
+    expect(restored.bookmarked).toBe(true);
+    expect(restored.read).toBe(beforeRelease.read);
+    expect(restored.bookmarkExpiresAt).toBe(beforeRelease.bookmarkExpiresAt);
+    expect(restored.bookmarkExpired).toBe(true);
+
+    // Extending when default is Off makes the bookmark permanent.
+    feeds.setBookmarkSettings({ bookmarkExpiryDays: null });
+    const extendedWhenOff = feeds.setItemState(items[3]!.id, { bookmarkExpiry: 'extend' });
+    expect(extendedWhenOff.bookmarkExpiresAt).toBeNull();
+    expect(extendedWhenOff.bookmarkExpired).toBe(false);
+  });
+
+  it('protects expired bookmarks from retention pruning and prunes them once released', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-01T10:00:00.000Z'));
+    const { feeds } = service({ [NEWS]: newsRss(3) });
+    await feeds.addSource({ url: NEWS });
+    const [first, second] = feeds.listItems({ limit: 10 }).items;
+
+    // Both read and bookmarked with 14-day expiry (Oct 15).
+    feeds.setItemState(first!.id, { read: true, bookmarked: true });
+    feeds.setItemState(second!.id, { read: true, bookmarked: true });
+
+    // Advance past both bookmark expiry (14d) and feed retention (30d).
+    vi.setSystemTime(new Date('2026-11-10T10:00:00.000Z'));
+    expect(feeds.requireItem(first!.id).bookmarkExpired).toBe(true);
+    expect(feeds.pruneRetention(new Date())).toEqual({ items: 0 });
+    expect(feeds.getItem(first!.id)).toBeDefined();
+
+    // Release first bookmark -> now retention prunes it, while second stays protected.
+    feeds.setItemState(first!.id, { bookmarked: false, read: true });
+    expect(feeds.pruneRetention(new Date())).toEqual({ items: 1 });
+    expect(feeds.getItem(first!.id)).toBeUndefined();
+    expect(feeds.getItem(second!.id)).toBeDefined();
   });
 });

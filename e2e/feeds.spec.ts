@@ -141,3 +141,115 @@ test('renders hostile feed content inertly; read, bookmark and filters work; lin
 
   expect(foreign).toEqual([]);
 });
+
+test('expiring bookmarks: setting in Mehr, calm active bookmark without countdown, friendly review on Heute and Gemerkt', async ({
+  page,
+  request,
+}) => {
+  const fixtures = await fixturesForApp();
+  const client = api(request);
+  await client.patch('/feeds/settings', { bookmarkExpiryDays: 14 });
+  await client.post('/feeds/sources', { url: `${fixtures}/feeds/news.xml` });
+
+  // Configure default expiry in Mehr and verify it persists across reload.
+  await page.goto('/mehr');
+  const expiryGroup = page.getByRole('group', { name: 'Ablauf-Frist' });
+  await expect(expiryGroup.getByRole('button', { name: '14 Tage' })).toHaveAttribute('aria-pressed', 'true');
+  await expiryGroup.getByRole('button', { name: '7 Tage' }).click();
+  await expect(expiryGroup.getByRole('button', { name: '7 Tage' })).toHaveAttribute('aria-pressed', 'true');
+  await page.reload();
+  await expect(page.getByRole('group', { name: 'Ablauf-Frist' }).getByRole('button', { name: '7 Tage' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await page.getByRole('group', { name: 'Ablauf-Frist' }).getByRole('button', { name: '14 Tage' }).click();
+  await expect(page.getByRole('group', { name: 'Ablauf-Frist' }).getByRole('button', { name: '14 Tage' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+
+  // Bookmark one item: active bookmark shows no countdown or remaining-time badge.
+  await nav(page, 'Feeds');
+  const entries = page.getByTestId('feed-item');
+  const activeItem = entries.filter({ hasText: 'Meldung 2:' });
+  await activeItem.getByRole('button', { name: 'Merken' }).click();
+  await expect(activeItem.getByRole('button', { name: 'Merken' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(activeItem).not.toContainText(/Noch \d+|Läuft|Abgelaufen/);
+
+  // Heute shows no «Lesezeichen prüfen» block when nothing is expired.
+  await nav(page, 'Heute');
+  await expect(page.getByTestId('expired-bookmarks')).toHaveCount(0);
+
+  // Mark 6 items as expired bookmarks (including already-read items) via the JSON API.
+  const { items } = await client.get<{ items: { id: number; title: string }[] }>('/feeds/items?limit=20');
+  const targets = items.filter((i) => !i.title.includes('Meldung 2:')).slice(0, 6);
+  for (let idx = 0; idx < targets.length; idx++) {
+    await client.patch(`/feeds/items/${targets[idx]!.id}`, {
+      read: true,
+      bookmarked: true,
+      bookmarkExpiry: new Date(Date.UTC(2025, 0, 1 + idx)).toISOString(),
+    });
+  }
+
+  // Heute shows «Lesezeichen prüfen» capped at 5 items + link to «Gemerkt».
+  await page.reload();
+  const review = page.getByTestId('expired-bookmarks');
+  await expect(review).toBeVisible();
+  await expect(review).toContainText('6 abgelaufen');
+  await expect(review.getByTestId('expired-bookmark')).toHaveCount(5);
+  await expect(review.getByRole('link', { name: 'Alle 6 in «Gemerkt» ansehen' })).toBeVisible();
+
+  // Action on Heute: «Verlängern» removes item from expired list (5 remain, link disappears).
+  const firstExpired = review.getByTestId('expired-bookmark').first();
+  const firstTitle = (await firstExpired.locator('.review-title').textContent())!.trim();
+  await firstExpired.getByRole('button', { name: 'Verlängern' }).click();
+  await expect(review).toContainText('5 abgelaufen');
+  await expect(review.getByTestId('expired-bookmark').filter({ hasText: firstTitle })).toHaveCount(0);
+
+  // Action on Heute: «Dauerhaft» removes item from expired list (4 remain).
+  const secondExpired = review.getByTestId('expired-bookmark').first();
+  const secondTitle = (await secondExpired.locator('.review-title').textContent())!.trim();
+  await secondExpired.getByRole('button', { name: 'Dauerhaft' }).click();
+  await expect(review).toContainText('4 abgelaufen');
+  await expect(review.getByTestId('expired-bookmark').filter({ hasText: secondTitle })).toHaveCount(0);
+
+  // Action on Heute: «Loslassen» removes bookmark with Undo; Undo restores it as expired.
+  const thirdExpired = review.getByTestId('expired-bookmark').first();
+  const thirdTitle = (await thirdExpired.locator('.review-title').textContent())!.trim();
+  await thirdExpired.getByRole('button', { name: 'Loslassen' }).click();
+  await expect(review).toContainText('3 abgelaufen');
+  const toast = page.getByTestId('undo-toast');
+  await expect(toast).toContainText('Lesezeichen losgelassen');
+  await toast.getByRole('button', { name: 'Rückgängig' }).click();
+  await expect(review).toContainText('4 abgelaufen');
+  await expect(review.getByTestId('expired-bookmark').filter({ hasText: thirdTitle })).toBeVisible();
+
+  // Navigate to Feeds and toggle «Gemerkt»: «Ungelesen» turns off automatically, expired items appear at the top.
+  await nav(page, 'Feeds');
+  await expect(page.getByRole('button', { name: 'Ungelesen' })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Gemerkt' }).click();
+  await expect(page.getByRole('button', { name: 'Gemerkt' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Ungelesen' })).toHaveAttribute('aria-pressed', 'false');
+
+  // 4 expired + 3 active/permanent = 7 bookmarked items total, first 4 marked expired.
+  await expect(entries).toHaveCount(7);
+  await expect(page.locator('[data-expired="true"]')).toHaveCount(4);
+
+  // Active bookmark under «Gemerkt» can toggle «Dauerhaft» directly (still no countdown).
+  const activeRow = entries.filter({ hasText: 'Meldung 2:' });
+  const permBtn = activeRow.getByRole('button', { name: 'Dauerhaft' });
+  await expect(permBtn).toHaveAttribute('aria-pressed', 'false');
+  await permBtn.click();
+  await expect(permBtn).toHaveAttribute('aria-pressed', 'true');
+  await expect(activeRow).not.toContainText(/Noch \d+|Läuft/);
+
+  // «Loslassen» under «Gemerkt» removes item and offers «Rückgängig»; leaving it un-undone persists across reload.
+  const topExpired = entries.first();
+  await topExpired.getByRole('button', { name: 'Loslassen' }).click();
+  await expect(entries).toHaveCount(6);
+  await expect(page.getByTestId('undo-toast')).toContainText('Lesezeichen losgelassen');
+  await page.reload();
+  await page.getByRole('button', { name: 'Gemerkt' }).click();
+  await expect(entries).toHaveCount(6);
+  await expect(page.locator('[data-expired="true"]')).toHaveCount(3);
+});
