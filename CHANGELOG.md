@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-26
+
+### Added
+
+- Expiring feed bookmarks («Gemerkt mit Ablaufdatum»): configurable default expiry in **Mehr** (7, 14, 30 days or Off; defaults to 14 days, applies to new and extended bookmarks, existing bookmarks receive a one-time 14-day period on upgrade). Active bookmarks stay calm without countdown labels; expired bookmarks remain protected from retention pruning and surface a friendly review prompt on **Heute** (compact **Lesezeichen prüfen** block, capped at 5 items with a link to **Gemerkt**) and at the top of **Feeds → Gemerkt**, with direct **Verlängern**, **Dauerhaft**, **Loslassen** (with Undo) and **Aufgabe** actions.
+- Read-only MCP feed tools (`list_feed_items`, `get_feed_item`, `search`) now expose `bookmarkExpiresAt` and `bookmarkExpired`, and `list_feed_items` accepts an optional `expiredBookmarks` filter.
+
+### Changed
+
+- Enabling the **Gemerkt** filter in **Feeds** automatically turns off **Ungelesen** so read bookmarks remain visible (and restores the previous unread filter state when turning **Gemerkt** off unless changed manually).
+
 ## [0.7.0] - 2026-11-25
 
 ### Added
@@ -97,7 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SSRF protection checks the IPv4 address inside NAT64 addresses (`64:ff9b::/96`) and blocks the local-use NAT64 range.
 - OPML import skips feed URLs that contain a user name or password.
 
-[Unreleased]: https://github.com/SG303/life-hub/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/SG303/life-hub/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/SG303/life-hub/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/SG303/life-hub/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/SG303/life-hub/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/SG303/life-hub/compare/v0.4.0...v0.5.0

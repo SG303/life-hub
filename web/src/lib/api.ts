@@ -1,6 +1,17 @@
 /** Typed client for the `/api/v1` JSON API. The UI talks to the backend only through this module. */
 
 export type FeedType = 'news' | 'video' | 'podcast';
+export type BookmarkExpiryDays = 7 | 14 | 30 | null;
+
+export interface FeedSettings {
+  bookmarkExpiryDays: BookmarkExpiryDays;
+}
+
+export interface ItemStatePatch {
+  read?: boolean;
+  bookmarked?: boolean;
+  bookmarkExpiry?: 'extend' | 'permanent' | string | null;
+}
 
 export interface Task {
   id: number;
@@ -39,6 +50,8 @@ export interface FeedItem {
   fetchedAt: string;
   read: boolean;
   bookmarked: boolean;
+  bookmarkExpiresAt: string | null;
+  bookmarkExpired: boolean;
 }
 
 export interface ChatThread {
@@ -84,7 +97,9 @@ export interface ChatMessage {
 export interface Cockpit {
   generatedAt: string;
   tasks: { today: string; overdue: Task[]; dueToday: Task[]; upcoming: Task[]; openCount: number };
-  feeds: Record<FeedType, { items: FeedItem[]; unreadCount: number }>;
+  feeds: Record<FeedType, { items: FeedItem[]; unreadCount: number }> & {
+    expiredBookmarks: { items: FeedItem[]; total: number; defaultExpiryDays: BookmarkExpiryDays };
+  };
 }
 
 export interface ChatContext {
@@ -142,6 +157,8 @@ export const api = {
   updateTask: (id: number, patch: TaskPatch) => request<Task>('PATCH', `/tasks/${id}`, patch),
   deleteTask: (id: number) => request<void>('DELETE', `/tasks/${id}`),
 
+  feedSettings: () => request<FeedSettings>('GET', '/feeds/settings'),
+  updateFeedSettings: (settings: FeedSettings) => request<FeedSettings>('PATCH', '/feeds/settings', settings),
   sources: () => request<{ items: FeedSource[]; refreshing: boolean }>('GET', '/feeds/sources'),
   addSource: (source: { url: string; type?: FeedType; title?: string }) => request<FeedSource>('POST', '/feeds/sources', source),
   updateSource: (id: number, patch: { url?: string; type?: FeedType; title?: string }) =>
@@ -149,9 +166,9 @@ export const api = {
   deleteSource: (id: number) => request<void>('DELETE', `/feeds/sources/${id}`),
   importOpml: (opml: string) => request<{ added: number; skipped: number; invalid: number }>('POST', '/feeds/opml', { opml }),
   refresh: () => request<{ refreshed: number; failed: number; newItems: number }>('POST', '/feeds/refresh', {}),
-  items: (filter: { type?: FeedType; unread?: boolean; bookmarked?: boolean; limit?: number; offset?: number }) =>
+  items: (filter: { type?: FeedType; unread?: boolean; bookmarked?: boolean; expired?: boolean; limit?: number; offset?: number }) =>
     request<{ items: FeedItem[]; total: number }>('GET', `/feeds/items${query(filter)}`),
-  updateItem: (id: number, state: { read?: boolean; bookmarked?: boolean }) => request<FeedItem>('PATCH', `/feeds/items/${id}`, state),
+  updateItem: (id: number, state: ItemStatePatch) => request<FeedItem>('PATCH', `/feeds/items/${id}`, state),
   markAllRead: (type?: FeedType) => request<{ updated: number }>('POST', '/feeds/items/mark-read', { type }),
 
   agentStatus: () => request<{ configured: boolean; model: string | null; reachable: boolean | null }>('GET', '/chat/status'),

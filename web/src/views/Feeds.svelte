@@ -6,7 +6,8 @@
   import SourceForm from '../components/SourceForm.svelte';
   import TaskCreateSheet from '../components/TaskCreateSheet.svelte';
   import UndoToast from '../components/UndoToast.svelte';
-  import { api, type FeedItem, type FeedSource, type FeedType } from '../lib/api';
+  import { api, type BookmarkExpiryDays, type FeedItem, type FeedSource, type FeedType } from '../lib/api';
+  import { router } from '../lib/router.svelte';
   import { taskDraftFromFeedItem } from '../lib/swipe';
 
   const PAGE = 50;
@@ -17,9 +18,14 @@
     { value: 'podcast', label: 'Podcasts' },
   ];
 
+  const startBookmarked = router.params.has('gemerkt');
+  if (startBookmarked) router.go('/feeds', { replace: true });
+
   let type = $state<FeedType | ''>('');
-  let unread = $state(true);
-  let bookmarked = $state(false);
+  let unread = $state(!startBookmarked);
+  let bookmarked = $state(startBookmarked);
+  let unreadBeforeBookmarked = $state<boolean | null>(startBookmarked ? true : null);
+  let defaultExpiryDays = $state<BookmarkExpiryDays>(14);
   let items = $state<FeedItem[]>([]);
   let total = $state(0);
   let loaded = $state(false);
@@ -70,6 +76,10 @@
   }
 
   $effect(() => {
+    api.feedSettings().then((s) => (defaultExpiryDays = s.bookmarkExpiryDays), () => undefined);
+  });
+
+  $effect(() => {
     const selectedType = type;
     void unread;
     void bookmarked;
@@ -78,6 +88,25 @@
     if (selectedType) items = untrack(() => items).filter((item) => item.type === selectedType);
     void load();
   });
+
+  function toggleBookmarked() {
+    if (!bookmarked) {
+      unreadBeforeBookmarked = unread;
+      unread = false;
+      bookmarked = true;
+    } else {
+      bookmarked = false;
+      if (unreadBeforeBookmarked !== null) {
+        unread = unreadBeforeBookmarked;
+        unreadBeforeBookmarked = null;
+      }
+    }
+  }
+
+  function toggleUnread() {
+    unread = !unread;
+    if (bookmarked) unreadBeforeBookmarked = null;
+  }
 
   async function refresh() {
     refreshing = true;
@@ -117,6 +146,51 @@
     const previous = items.find((item) => item.id === next.id);
     if (previous) total += Number(matches(next)) - Number(matches(previous));
     items = items.map((item) => (item.id === next.id ? next : item));
+    if (bookmarked && previous?.bookmarkExpired && !next.bookmarkExpired) void load();
+  }
+
+  async function releaseBookmark(item: FeedItem) {
+    openSwipeId = null;
+    error = '';
+    const previousIndex = items.findIndex((entry) => entry.id === item.id);
+    const wasMatching = matches(item);
+    const previousRead = item.read;
+    const previousExpiresAt = item.bookmarkExpiresAt;
+    try {
+      const next = await api.updateItem(item.id, { bookmarked: false, read: true });
+      if (bookmarked || unread) {
+        if (wasMatching) total = Math.max(0, total - 1);
+        items = items.filter((entry) => entry.id !== item.id);
+      } else {
+        updated(next);
+      }
+      const token = ++undoSeq;
+      undo = {
+        id: token,
+        message: 'Lesezeichen losgelassen',
+        onundo: async () => {
+          try {
+            const restored = await api.updateItem(item.id, {
+              bookmarked: true,
+              read: previousRead,
+              bookmarkExpiry: previousExpiresAt,
+            });
+            if (items.some((entry) => entry.id === restored.id)) {
+              updated(restored);
+            } else if (matches(restored)) {
+              const idx = previousIndex >= 0 ? Math.min(previousIndex, items.length) : 0;
+              items = [...items.slice(0, idx), restored, ...items.slice(idx)];
+              total += 1;
+            }
+            error = '';
+          } catch (e) {
+            error = (e as Error).message;
+          }
+        },
+      };
+    } catch (e) {
+      error = (e as Error).message;
+    }
   }
 
   async function swipeToggleRead(item: FeedItem) {
@@ -220,8 +294,8 @@
 </div>
 
 <div class="toolbar states">
-  <button class="toggle" type="button" aria-pressed={unread} onclick={() => (unread = !unread)}>Ungelesen</button>
-  <button class="toggle" type="button" aria-pressed={bookmarked} onclick={() => (bookmarked = !bookmarked)}>
+  <button class="toggle" type="button" aria-pressed={unread} onclick={toggleUnread}>Ungelesen</button>
+  <button class="toggle" type="button" aria-pressed={bookmarked} onclick={toggleBookmarked}>
     <Icon name="bookmark" size={16} filled={bookmarked} />Gemerkt
   </button>
   <button class="button quiet mark" type="button" onclick={markAllRead} title="Alle als gelesen markieren">
@@ -237,10 +311,13 @@
     {#each items as item (item.id)}
       <FeedEntry
         {item}
+        bookmarkedView={bookmarked}
+        {defaultExpiryDays}
         swipeOpen={openSwipeId === item.id}
         onswipeopen={(isOpen) => (openSwipeId = isOpen ? item.id : openSwipeId === item.id ? null : openSwipeId)}
         onswiperight={swipeToggleRead}
         ontask={openTaskSheet}
+        onrelease={releaseBookmark}
         onchange={updated}
       />
     {/each}
@@ -255,7 +332,7 @@
       <button class="link" type="button" onclick={() => (addingSource = true)}>Erste Quelle hinzufügen</button>
     </p>
   {:else}
-    <p class="empty">{unread ? 'Alles gelesen.' : 'Keine Einträge für diesen Filter.'}</p>
+    <p class="empty">{bookmarked ? 'Keine gemerkten Einträge.' : unread ? 'Alles gelesen.' : 'Keine Einträge für diesen Filter.'}</p>
   {/if}
 {/if}
 

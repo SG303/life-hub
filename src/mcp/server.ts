@@ -147,22 +147,29 @@ export function buildMcpServer(deps: McpDeps): McpServer {
     'list_feed_items',
     {
       title: 'List feed items',
-      description: `Lists news, video and podcast items from subscribed feeds, newest first. Paginated. ${UNTRUSTED_NOTE}`,
+      description: `Lists news, video and podcast items from subscribed feeds, newest first (expired bookmarks first when filtering bookmarked items). Paginated. ${UNTRUSTED_NOTE}`,
       inputSchema: {
         type: z.enum(FEED_TYPES).optional().describe('news, video or podcast'),
         unread: z.boolean().optional().describe('Only unread items'),
         bookmarked: z.boolean().optional().describe('Only bookmarked items'),
+        expiredBookmarks: z.boolean().optional().describe('Only expired bookmarked items awaiting review'),
         limit,
         cursor,
       },
       annotations: readOnly,
     },
-    ({ type, unread, bookmarked, limit: size, cursor: next }) => {
+    ({ type, unread, bookmarked, expiredBookmarks, limit: size, cursor: next }) => {
       const base = type ? (FEED_KIND_PLURAL[type] ?? 'Feeds') : 'Feeds';
-      const scope = bookmarked ? `Gemerkte ${base}` : unread ? `Ungelesene ${base}` : base;
+      const scope = expiredBookmarks
+        ? 'Abgelaufene Lesezeichen'
+        : bookmarked
+          ? `Gemerkte ${base}`
+          : unread
+            ? `Ungelesene ${base}`
+            : base;
       return trace('list_feed_items', `${scope} lesen …`, () => {
         const offset = cursorToOffset(next);
-        const result = deps.feeds.listItems({ type, unread, bookmarked, limit: size ?? 20, offset });
+        const result = deps.feeds.listItems({ type, unread, bookmarked, expiredBookmarks, limit: size ?? 20, offset });
         return {
           result: json({ notice: UNTRUSTED_NOTE, ...page(result.items.map(feedItem), result.total, offset) }),
           label: `${scope} gelesen (${result.items.length})`,

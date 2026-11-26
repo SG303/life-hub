@@ -190,4 +190,42 @@ describe('MCP endpoint', () => {
     ]);
     expect(JSON.stringify(events)).not.toContain('Schlauch kaufen');
   });
+
+  it('exposes bookmark expiry fields in read-only feed tools and supports expiredBookmarks filter', async () => {
+    const [first, second] = feeds.listItems({ limit: 5 }).items;
+    feeds.setItemState(first!.id, { bookmarked: true, bookmarkExpiry: '2020-01-01T00:00:00.000Z' });
+    feeds.setItemState(second!.id, { bookmarked: true, bookmarkExpiry: '2099-01-01T00:00:00.000Z' });
+
+    const events: McpToolEvent[] = [];
+    const { server: s, url: u } = await startMcp(TOKEN, tasks, feeds, true, (ev) => events.push(ev));
+    const client = await connect(u);
+
+    const expired = parse(await client.callTool({ name: 'list_feed_items', arguments: { expiredBookmarks: true } }));
+    expect(expired.total).toBe(1);
+    const [expiredItem] = expired.items as { id: number; bookmarkExpiresAt: string; bookmarkExpired: boolean }[];
+    expect(expiredItem).toMatchObject({
+      id: first!.id,
+      bookmarkExpiresAt: '2020-01-01T00:00:00.000Z',
+      bookmarkExpired: true,
+    });
+
+    const one = parse(await client.callTool({ name: 'get_feed_item', arguments: { id: second!.id } }));
+    expect(one.item).toMatchObject({
+      id: second!.id,
+      bookmarked: true,
+      bookmarkExpiresAt: '2099-01-01T00:00:00.000Z',
+      bookmarkExpired: false,
+    });
+
+    const searched = parse(await client.callTool({ name: 'search', arguments: { query: first!.title.slice(0, 12) } }));
+    const hit = (searched.feedItems as { items: { id: number; bookmarkExpired: boolean }[] }).items.find(
+      (i) => i.id === first!.id,
+    );
+    expect(hit?.bookmarkExpired).toBe(true);
+
+    expect(events.some((e) => e.status === 'done' && e.label === 'Abgelaufene Lesezeichen gelesen (1)')).toBe(true);
+
+    await client.close();
+    s.close();
+  });
 });
