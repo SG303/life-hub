@@ -29,6 +29,11 @@ export function api(request: APIRequestContext) {
       expect(res.ok(), `${path}: ${await res.text()}`).toBeTruthy();
       return (await res.json()) as T;
     },
+    patch: async <T>(path: string, data: unknown) => {
+      const res = await request.patch(`/api/v1${path}`, { headers, data });
+      expect(res.ok(), `${path}: ${await res.text()}`).toBeTruthy();
+      return (await res.json()) as T;
+    },
     delete: async (path: string) => {
       const res = await request.delete(`/api/v1${path}`, { headers: { Origin: BASE } });
       expect(res.ok()).toBeTruthy();

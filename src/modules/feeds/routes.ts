@@ -1,6 +1,13 @@
 import { HttpError, Router, input, reply } from '../../core/http.js';
 import { OPML_MAX_BYTES } from './opml.js';
-import { FEED_TYPES, type FeedService, type FeedType } from './service.js';
+import {
+  BOOKMARK_EXPIRY_OPTIONS,
+  FEED_TYPES,
+  type BookmarkExpiryDays,
+  type FeedService,
+  type FeedType,
+  type ItemStatePatch,
+} from './service.js';
 
 function feedType(value: unknown): FeedType | undefined {
   if (value === undefined || value === null || value === '') return undefined;
@@ -8,8 +15,28 @@ function feedType(value: unknown): FeedType | undefined {
   return value as FeedType;
 }
 
+function bookmarkExpiryDays(value: unknown): BookmarkExpiryDays {
+  if (value === null) return null;
+  if (typeof value === 'number' && BOOKMARK_EXPIRY_OPTIONS.includes(value as BookmarkExpiryDays)) {
+    return value as BookmarkExpiryDays;
+  }
+  throw new HttpError(400, 'invalid_field', 'Ablauf-Frist muss 7, 14, 30 Tage oder «Aus» sein.');
+}
+
+function bookmarkExpiryPatch(value: unknown): ItemStatePatch['bookmarkExpiry'] {
+  if (value === undefined) return undefined;
+  if (value === null || value === 'extend' || value === 'permanent') return value;
+  if (typeof value === 'string' && value.length <= 64) return value;
+  throw new HttpError(400, 'invalid_field', 'Ungültiges Feld «Ablaufdatum».');
+}
+
 export function feedRoutes(feeds: FeedService): Router {
   return new Router()
+    .get('/settings', () => feeds.getBookmarkSettings())
+    .patch('/settings', ({ body }) => {
+      const data = input.object(body);
+      return feeds.setBookmarkSettings({ bookmarkExpiryDays: bookmarkExpiryDays(data.bookmarkExpiryDays) });
+    })
     .get('/sources', () => ({ items: feeds.listSources(), refreshing: feeds.isRefreshing }))
     .post('/sources', async ({ body }) => {
       const data = input.object(body);
@@ -46,6 +73,7 @@ export function feedRoutes(feeds: FeedService): Router {
         type: feedType(query.get('type')),
         unread: query.get('unread') === '1',
         bookmarked: query.get('bookmarked') === '1',
+        expiredBookmarks: query.get('expired') === '1',
         sourceId: source ? input.id(source) : undefined,
         query: query.get('q')?.slice(0, 200) || undefined,
         limit: input.limit(query.get('limit'), 50, 200),
@@ -59,6 +87,7 @@ export function feedRoutes(feeds: FeedService): Router {
       return feeds.setItemState(input.id(params.id), {
         read: input.boolean(data.read, 'Gelesen'),
         bookmarked: input.boolean(data.bookmarked, 'Gemerkt'),
+        bookmarkExpiry: bookmarkExpiryPatch(data.bookmarkExpiry),
       });
     });
 }

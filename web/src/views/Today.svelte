@@ -1,14 +1,22 @@
 <script lang="ts">
   import FeedEntry from '../components/FeedEntry.svelte';
   import Icon from '../components/Icon.svelte';
+  import TaskCreateSheet from '../components/TaskCreateSheet.svelte';
   import TaskItem from '../components/TaskItem.svelte';
-  import { api, type Cockpit, type FeedType } from '../lib/api';
+  import UndoToast from '../components/UndoToast.svelte';
+  import { api, type Cockpit, type FeedItem, type FeedType } from '../lib/api';
   import { TYPE_LABEL } from '../lib/format';
   import { router } from '../lib/router.svelte';
+  import { taskDraftFromFeedItem } from '../lib/swipe';
 
   let cockpit = $state<Cockpit | undefined>();
   let agent = $state<{ configured: boolean; reachable: boolean | null } | undefined>();
   let error = $state('');
+  let undo = $state<{ id: number; message: string; onundo: () => Promise<void> } | undefined>();
+  let undoSeq = 0;
+  let taskSheetOpen = $state(false);
+  let taskSourceItem = $state<FeedItem | undefined>();
+  let taskCategories = $state<string[]>([]);
 
   async function load() {
     try {
@@ -35,6 +43,7 @@
         ]
       : [],
   );
+  const expiredBookmarks = $derived(cockpit?.feeds.expiredBookmarks);
   const STATE_LABEL = { up: 'erreichbar', down: 'nicht erreichbar', off: 'nicht konfiguriert' } as const;
   const types: FeedType[] = ['news', 'video', 'podcast'];
   const TYPE_ICON: Record<FeedType, string> = { news: 'feeds', video: 'play', podcast: 'listen' };
@@ -42,6 +51,87 @@
   function go(event: MouseEvent, path: string) {
     event.preventDefault();
     router.go(path);
+  }
+
+  async function markRead(item: FeedItem) {
+    if (item.read) return;
+    try {
+      await api.updateItem(item.id, { read: true });
+      await load();
+    } catch (e) {
+      error = (e as Error).message;
+    }
+  }
+
+  async function extendBookmark(item: FeedItem) {
+    error = '';
+    try {
+      await api.updateItem(item.id, { bookmarkExpiry: 'extend' });
+      await load();
+    } catch (e) {
+      error = (e as Error).message;
+    }
+  }
+
+  async function keepPermanent(item: FeedItem) {
+    error = '';
+    try {
+      await api.updateItem(item.id, { bookmarkExpiry: 'permanent' });
+      await load();
+    } catch (e) {
+      error = (e as Error).message;
+    }
+  }
+
+  async function releaseBookmark(item: FeedItem) {
+    error = '';
+    const previousRead = item.read;
+    const previousExpiresAt = item.bookmarkExpiresAt;
+    try {
+      await api.updateItem(item.id, { bookmarked: false, read: true });
+      await load();
+      const token = ++undoSeq;
+      undo = {
+        id: token,
+        message: 'Lesezeichen losgelassen',
+        onundo: async () => {
+          try {
+            await api.updateItem(item.id, {
+              bookmarked: true,
+              read: previousRead,
+              bookmarkExpiry: previousExpiresAt,
+            });
+            await load();
+          } catch (e) {
+            error = (e as Error).message;
+          }
+        },
+      };
+    } catch (e) {
+      error = (e as Error).message;
+    }
+  }
+
+  function openTaskSheet(item: FeedItem) {
+    taskSourceItem = item;
+    taskSheetOpen = true;
+    api.categories().then(
+      (res) => (taskCategories = res.items),
+      () => undefined,
+    );
+  }
+
+  async function taskCreated() {
+    const sourceItem = taskSourceItem;
+    taskSourceItem = undefined;
+    if (sourceItem && !sourceItem.read) {
+      try {
+        await api.updateItem(sourceItem.id, { read: true });
+      } catch (e) {
+        error = (e as Error).message;
+      }
+    }
+    await load();
   }
 </script>
 
@@ -91,6 +181,58 @@
     </div>
 
     <section class="right" aria-labelledby="h-feeds">
+      {#if expiredBookmarks && expiredBookmarks.total > 0}
+        <section class="sheet review" aria-labelledby="h-review" data-testid="expired-bookmarks">
+          <div class="slab-head">
+            <h2 id="h-review">Lesezeichen prüfen</h2>
+            <span class="expired-count">{expiredBookmarks.total} abgelaufen</span>
+          </div>
+          <ul class="list">
+            {#each expiredBookmarks.items as item (item.id)}
+              <li class="review-item" data-testid="expired-bookmark">
+                <p class="meta">{item.sourceTitle}</p>
+                {#if item.url}
+                  <a
+                    class="review-title"
+                    href={item.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onclick={() => void markRead(item)}
+                    onauxclick={() => void markRead(item)}
+                  >
+                    {item.title}<span class="external"><Icon name="external" size={14} /></span>
+                  </a>
+                {:else}
+                  <p class="review-title">{item.title}</p>
+                {/if}
+                <div class="review-actions">
+                  <button
+                    class="button primary small"
+                    type="button"
+                    title={expiredBookmarks.defaultExpiryDays
+                      ? `Um ${expiredBookmarks.defaultExpiryDays} Tage verlängern`
+                      : 'Dauerhaft behalten'}
+                    onclick={() => extendBookmark(item)}
+                  >
+                    Verlängern
+                  </button>
+                  <button class="button small" type="button" onclick={() => keepPermanent(item)}>Dauerhaft</button>
+                  <button class="button small danger" type="button" onclick={() => releaseBookmark(item)}>Loslassen</button>
+                  <button class="button quiet small" type="button" onclick={() => openTaskSheet(item)}>
+                    <Icon name="tasks" size={16} />Aufgabe
+                  </button>
+                </div>
+              </li>
+            {/each}
+          </ul>
+          {#if expiredBookmarks.total > expiredBookmarks.items.length}
+            <a class="more" href="/feeds?gemerkt=1" onclick={(e) => go(e, '/feeds?gemerkt=1')}>
+              Alle {expiredBookmarks.total} in «Gemerkt» ansehen
+            </a>
+          {/if}
+        </section>
+      {/if}
+
       <div class="feeds-head">
         <h2 id="h-feeds">Neu in deinen Feeds</h2>
         <a href="/feeds" onclick={(e) => go(e, '/feeds')}>Zu den Feeds</a>
@@ -116,6 +258,17 @@
       {/each}
     </section>
   </div>
+{/if}
+
+<TaskCreateSheet
+  bind:open={taskSheetOpen}
+  categories={taskCategories}
+  initial={taskSourceItem ? taskDraftFromFeedItem(taskSourceItem) : undefined}
+  oncreated={taskCreated}
+/>
+
+{#if undo}
+  <UndoToast id={undo.id} message={undo.message} onundo={undo.onundo} ondismiss={() => (undo = undefined)} />
 {/if}
 
 <style>
@@ -225,6 +378,62 @@
     font-weight: 500;
   }
 
+  .review {
+    margin: 2rem 0 1.75rem;
+    padding-top: 1.1rem;
+  }
+
+  .review h2 {
+    font-size: 1.25rem;
+  }
+
+  .expired-count {
+    padding: 0.1rem 0.6rem;
+    border-radius: 999px;
+    background: var(--badge);
+    color: var(--badge-ink);
+    font-size: var(--step--1);
+    font-weight: 650;
+  }
+
+  .review-item {
+    padding: 0.85rem 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .review-item .meta {
+    margin: 0 0 0.15rem;
+  }
+
+  .review-title {
+    display: block;
+    margin: 0;
+    color: var(--ink);
+    font-weight: 650;
+    line-height: 1.3;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+  }
+
+  a.review-title:hover {
+    text-decoration: underline;
+    text-decoration-color: var(--accent);
+  }
+
+  .external {
+    display: inline-block;
+    margin-left: 0.3rem;
+    color: var(--soft);
+    vertical-align: -0.1em;
+  }
+
+  .review-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    margin-top: 0.6rem;
+  }
+
   .feeds-head {
     display: flex;
     flex-wrap: wrap;
@@ -298,7 +507,11 @@
       top: 1.75rem;
     }
 
-    /* Line the feeds heading up with the top of the slab. */
+    /* Line the right column up with the top of the slab. */
+    .review {
+      margin-top: 0;
+    }
+
     .feeds-head {
       margin-top: 0;
     }

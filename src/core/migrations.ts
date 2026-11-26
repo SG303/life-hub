@@ -93,4 +93,21 @@ export const migrations: { version: number; sql: string }[] = [
       ALTER TABLE chat_messages ADD COLUMN tool_trace TEXT;
     `,
   },
+  {
+    // Expiring feed bookmarks and persisted app settings.
+    version: 4,
+    sql: `
+      CREATE TABLE app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      INSERT INTO app_settings (key, value) VALUES ('bookmark_expiry_days', '14');
+
+      ALTER TABLE feed_items ADD COLUMN bookmark_expires_at TEXT;
+      UPDATE feed_items
+      SET bookmark_expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+14 days')
+      WHERE is_bookmarked = 1 AND bookmark_expires_at IS NULL;
+      CREATE INDEX feed_items_bookmarked ON feed_items (is_bookmarked, bookmark_expires_at);
+    `,
+  },
 ];

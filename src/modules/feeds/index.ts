@@ -7,15 +7,26 @@ import { feedRoutes } from './routes.js';
 import { FeedScheduler } from './scheduler.js';
 import { FeedService } from './service.js';
 
-export type { FeedItem, FeedSource, FeedType, ItemFilter, RefreshResult } from './service.js';
-export { FEED_TYPES, FeedService } from './service.js';
+export type {
+  BookmarkExpiryDays,
+  BookmarkSettings,
+  ExpiredBookmarksSummary,
+  FeedItem,
+  FeedsCockpitSummary,
+  FeedSource,
+  FeedType,
+  ItemFilter,
+  ItemStatePatch,
+  RefreshResult,
+} from './service.js';
+export { BOOKMARK_EXPIRY_OPTIONS, DEFAULT_BOOKMARK_EXPIRY_DAYS, FEED_TYPES, FeedService } from './service.js';
 export type { Fetcher, FetchOptions, FetchResult } from './net.js';
 
 export interface FeedsModule {
   service: FeedService;
   scheduler: FeedScheduler;
   routes: Router;
-  /** Summary for the `Heute` cockpit: newest unread items per type. */
+  /** Summary for the `Heute` cockpit: newest unread items per type plus expired bookmarks. */
   cockpit: { id: string; summary(now: Date): unknown };
 }
 
@@ -25,6 +36,6 @@ export function createFeedsModule(db: Db, config: FeedConfig, fetcher?: Fetcher)
     service,
     scheduler: new FeedScheduler(service, config.refreshIntervalMs),
     routes: feedRoutes(service),
-    cockpit: { id: 'feeds', summary: () => service.recentUnread(5) },
+    cockpit: { id: 'feeds', summary: (now) => service.cockpitSummary(5, 5, now) },
   };
 }

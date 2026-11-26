@@ -12,6 +12,14 @@ import { isYouTubeUrl, resolveYouTubeFeed, YouTubeResolveError } from './youtube
 export const FEED_TYPES = ['news', 'video', 'podcast'] as const;
 export type FeedType = (typeof FEED_TYPES)[number];
 
+export const BOOKMARK_EXPIRY_OPTIONS = [7, 14, 30, null] as const;
+export type BookmarkExpiryDays = (typeof BOOKMARK_EXPIRY_OPTIONS)[number];
+export const DEFAULT_BOOKMARK_EXPIRY_DAYS: BookmarkExpiryDays = 14;
+
+export interface BookmarkSettings {
+  bookmarkExpiryDays: BookmarkExpiryDays;
+}
+
 export interface FeedSource {
   id: number;
   title: string;
@@ -37,17 +45,42 @@ export interface FeedItem {
   fetchedAt: string;
   read: boolean;
   bookmarked: boolean;
+  bookmarkExpiresAt: string | null;
+  bookmarkExpired: boolean;
 }
 
 export interface ItemFilter {
   type?: FeedType;
   unread?: boolean;
   bookmarked?: boolean;
+  expiredBookmarks?: boolean;
   sourceId?: number;
   query?: string;
   limit?: number;
   offset?: number;
 }
+
+export interface ItemStatePatch {
+  read?: boolean;
+  bookmarked?: boolean;
+  /**
+   * Controls bookmark expiry while bookmarked:
+   * - `'extend'`: reset expiry from now using the current default (or `null` when Off).
+   * - `'permanent'`: clear expiry (`null`, never expires).
+   * - ISO timestamp string or `null`: set an explicit expiry (used for undo restore).
+   */
+  bookmarkExpiry?: 'extend' | 'permanent' | string | null;
+}
+
+export interface ExpiredBookmarksSummary {
+  items: FeedItem[];
+  total: number;
+  defaultExpiryDays: BookmarkExpiryDays;
+}
+
+export type FeedsCockpitSummary = Record<FeedType, { items: FeedItem[]; unreadCount: number }> & {
+  expiredBookmarks: ExpiredBookmarksSummary;
+};
 
 export interface RefreshResult {
   refreshed: number;
@@ -90,6 +123,7 @@ interface ItemRow {
   fetched_at: string;
   is_read: number;
   is_bookmarked: number;
+  bookmark_expires_at: string | null;
 }
 
 function toSource(row: SourceRow): FeedSource {
@@ -107,7 +141,9 @@ function toSource(row: SourceRow): FeedSource {
   };
 }
 
-function toItem(row: ItemRow): FeedItem {
+function toItem(row: ItemRow, now: string): FeedItem {
+  const bookmarked = row.is_bookmarked === 1;
+  const bookmarkExpiresAt = bookmarked ? row.bookmark_expires_at : null;
   return {
     id: row.id,
     sourceId: row.source_id,
@@ -119,13 +155,15 @@ function toItem(row: ItemRow): FeedItem {
     publishedAt: row.published_at,
     fetchedAt: row.fetched_at,
     read: row.is_read === 1,
-    bookmarked: row.is_bookmarked === 1,
+    bookmarked,
+    bookmarkExpiresAt,
+    bookmarkExpired: bookmarked && bookmarkExpiresAt !== null && bookmarkExpiresAt <= now,
   };
 }
 
 const ITEM_SELECT = `
   SELECT i.id, i.source_id, s.title AS source_title, s.type, i.title, i.url, i.summary,
-         i.published_at, i.fetched_at, i.is_read, i.is_bookmarked
+         i.published_at, i.fetched_at, i.is_read, i.is_bookmarked, i.bookmark_expires_at
   FROM feed_items i JOIN feed_sources s ON s.id = i.source_id`;
 
 const SOURCE_SELECT = `
@@ -501,9 +539,42 @@ export class FeedService {
     return { items: Number(items) };
   }
 
+  // ---- Settings ------------------------------------------------------------
+
+  getBookmarkSettings(): BookmarkSettings {
+    const row = this.db.prepare("SELECT value FROM app_settings WHERE key = 'bookmark_expiry_days'").get() as
+      | { value: string }
+      | undefined;
+    if (!row) return { bookmarkExpiryDays: DEFAULT_BOOKMARK_EXPIRY_DAYS };
+    if (row.value === 'off') return { bookmarkExpiryDays: null };
+    const parsed = Number(row.value);
+    if (parsed === 7 || parsed === 14 || parsed === 30) return { bookmarkExpiryDays: parsed };
+    return { bookmarkExpiryDays: DEFAULT_BOOKMARK_EXPIRY_DAYS };
+  }
+
+  setBookmarkSettings(input: BookmarkSettings): BookmarkSettings {
+    if (!BOOKMARK_EXPIRY_OPTIONS.includes(input.bookmarkExpiryDays)) {
+      throw new HttpError(400, 'invalid_field', 'Ablauf-Frist muss 7, 14, 30 Tage oder «Aus» sein.');
+    }
+    const stored = input.bookmarkExpiryDays === null ? 'off' : String(input.bookmarkExpiryDays);
+    this.db
+      .prepare(
+        `INSERT INTO app_settings (key, value) VALUES ('bookmark_expiry_days', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(stored);
+    return { bookmarkExpiryDays: input.bookmarkExpiryDays };
+  }
+
+  private defaultExpiryIso(now: Date): string | null {
+    const days = this.getBookmarkSettings().bookmarkExpiryDays;
+    return days === null ? null : new Date(now.getTime() + days * DAY_MS).toISOString();
+  }
+
   // ---- Items ---------------------------------------------------------------
 
-  listItems(filter: ItemFilter = {}): { items: FeedItem[]; total: number } {
+  listItems(filter: ItemFilter = {}, now: Date = new Date()): { items: FeedItem[]; total: number } {
+    const nowStr = now.toISOString();
     const where: string[] = [];
     const params: (string | number)[] = [];
     if (filter.type) {
@@ -512,6 +583,10 @@ export class FeedService {
     }
     if (filter.unread) where.push('i.is_read = 0');
     if (filter.bookmarked) where.push('i.is_bookmarked = 1');
+    if (filter.expiredBookmarks) {
+      where.push('i.is_bookmarked = 1 AND i.bookmark_expires_at IS NOT NULL AND i.bookmark_expires_at <= ?');
+      params.push(nowStr);
+    }
     if (filter.sourceId) {
       where.push('i.source_id = ?');
       params.push(filter.sourceId);
@@ -527,29 +602,64 @@ export class FeedService {
         n: number;
       }
     ).n;
+    const expiredFirst = Boolean(filter.bookmarked || filter.expiredBookmarks);
+    const orderSql = expiredFirst
+      ? `ORDER BY
+           CASE WHEN i.is_bookmarked = 1 AND i.bookmark_expires_at IS NOT NULL AND i.bookmark_expires_at <= ? THEN 0 ELSE 1 END ASC,
+           CASE WHEN i.is_bookmarked = 1 AND i.bookmark_expires_at IS NOT NULL AND i.bookmark_expires_at <= ? THEN i.bookmark_expires_at ELSE NULL END ASC,
+           COALESCE(i.published_at, i.fetched_at) DESC, i.id DESC`
+      : `ORDER BY COALESCE(i.published_at, i.fetched_at) DESC, i.id DESC`;
+    const orderParams = expiredFirst ? [nowStr, nowStr] : [];
     const rows = this.db
-      .prepare(`${ITEM_SELECT} ${clause} ORDER BY COALESCE(i.published_at, i.fetched_at) DESC, i.id DESC LIMIT ? OFFSET ?`)
-      .all(...params, filter.limit ?? 50, filter.offset ?? 0) as unknown as ItemRow[];
-    return { items: rows.map(toItem), total };
+      .prepare(`${ITEM_SELECT} ${clause} ${orderSql} LIMIT ? OFFSET ?`)
+      .all(...params, ...orderParams, filter.limit ?? 50, filter.offset ?? 0) as unknown as ItemRow[];
+    return { items: rows.map((row) => toItem(row, nowStr)), total };
   }
 
-  getItem(id: number): FeedItem | undefined {
+  getItem(id: number, now: Date = new Date()): FeedItem | undefined {
     const row = this.db.prepare(`${ITEM_SELECT} WHERE i.id = ?`).get(id) as ItemRow | undefined;
-    return row ? toItem(row) : undefined;
+    return row ? toItem(row, now.toISOString()) : undefined;
   }
 
-  requireItem(id: number): FeedItem {
-    const item = this.getItem(id);
+  requireItem(id: number, now: Date = new Date()): FeedItem {
+    const item = this.getItem(id, now);
     if (!item) throw new HttpError(404, 'item_not_found', 'Eintrag nicht gefunden.');
     return item;
   }
 
-  setItemState(id: number, state: { read?: boolean; bookmarked?: boolean }): FeedItem {
-    const item = this.requireItem(id);
+  setItemState(id: number, state: ItemStatePatch, now: Date = new Date()): FeedItem {
+    const item = this.requireItem(id, now);
+    const nextRead = state.read ?? item.read;
+    const nextBookmarked = state.bookmarked ?? item.bookmarked;
+    if (!nextBookmarked && state.bookmarkExpiry !== undefined) {
+      throw new HttpError(400, 'invalid_field', 'Ablaufdatum kann nur für gemerkte Einträge gesetzt werden.');
+    }
+
+    let nextExpiresAt: string | null;
+    if (!nextBookmarked) {
+      nextExpiresAt = null;
+    } else if (state.bookmarkExpiry === 'permanent' || state.bookmarkExpiry === null) {
+      nextExpiresAt = null;
+    } else if (state.bookmarkExpiry === 'extend') {
+      nextExpiresAt = this.defaultExpiryIso(now);
+    } else if (typeof state.bookmarkExpiry === 'string') {
+      const parsed = Date.parse(state.bookmarkExpiry);
+      if (!Number.isFinite(parsed)) {
+        throw new HttpError(400, 'invalid_field', 'Ungültiges Ablaufdatum.');
+      }
+      nextExpiresAt = new Date(parsed).toISOString();
+    } else if (!item.bookmarked) {
+      // Newly bookmarked: assign current default expiry.
+      nextExpiresAt = this.defaultExpiryIso(now);
+    } else {
+      // Already bookmarked and bookmarkExpiry omitted (e.g. toggling read): keep existing expiry untouched.
+      nextExpiresAt = item.bookmarkExpiresAt;
+    }
+
     this.db
-      .prepare('UPDATE feed_items SET is_read = ?, is_bookmarked = ? WHERE id = ?')
-      .run((state.read ?? item.read) ? 1 : 0, (state.bookmarked ?? item.bookmarked) ? 1 : 0, id);
-    return this.requireItem(id);
+      .prepare('UPDATE feed_items SET is_read = ?, is_bookmarked = ?, bookmark_expires_at = ? WHERE id = ?')
+      .run(nextRead ? 1 : 0, nextBookmarked ? 1 : 0, nextExpiresAt, id);
+    return this.requireItem(id, now);
   }
 
   markAllRead(type?: FeedType): number {
@@ -562,12 +672,26 @@ export class FeedService {
   }
 
   /** Newest unread items per type, bounded so one feed type never dominates. */
-  recentUnread(perType = 5): Record<FeedType, { items: FeedItem[]; unreadCount: number }> {
+  recentUnread(perType = 5, now: Date = new Date()): Record<FeedType, { items: FeedItem[]; unreadCount: number }> {
     const result = {} as Record<FeedType, { items: FeedItem[]; unreadCount: number }>;
     for (const type of FEED_TYPES) {
-      const { items, total } = this.listItems({ type, unread: true, limit: perType });
+      const { items, total } = this.listItems({ type, unread: true, limit: perType }, now);
       result[type] = { items, unreadCount: total };
     }
     return result;
+  }
+
+  /** Summary for the `Heute` cockpit: newest unread items per type plus expired bookmarks. */
+  cockpitSummary(perType = 5, expiredLimit = 5, now: Date = new Date()): FeedsCockpitSummary {
+    const unread = this.recentUnread(perType, now);
+    const expired = this.listItems({ expiredBookmarks: true, limit: expiredLimit }, now);
+    return {
+      ...unread,
+      expiredBookmarks: {
+        items: expired.items,
+        total: expired.total,
+        defaultExpiryDays: this.getBookmarkSettings().bookmarkExpiryDays,
+      },
+    };
   }
 }
