@@ -17,6 +17,12 @@ export function dueLabel(dueDate: string, today: string): string {
   return new Intl.DateTimeFormat('de-CH', { day: 'numeric', month: 'short', timeZone: 'UTC' }).format(civilToUtc(dueDate));
 }
 
+/** Right-hand label of a compact task row: the due date unless it is today, else the list, else nothing. */
+export function compactLabel(dueDate: string | null, category: string | null, today: string): string {
+  if (dueDate && dueDate !== today) return dueLabel(dueDate, today);
+  return category ?? '';
+}
+
 export function isOverdue(dueDate: string | null, today: string): boolean {
   return dueDate !== null && dueDate < today;
 }
