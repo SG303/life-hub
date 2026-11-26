@@ -4,6 +4,8 @@
   import SourceForm from '../components/SourceForm.svelte';
   import { api, type BookmarkExpiryDays, type FeedSource, type FeedType } from '../lib/api';
   import { ago, TYPE_LABEL, TYPE_SINGULAR } from '../lib/format';
+  import { isPackageName, LINK_APP_LABEL, LINK_APPS, type LinkAppId } from '../lib/linkApps';
+  import { linkApps, setLinkApp } from '../lib/linkApps.svelte';
 
   const TYPES: FeedType[] = ['news', 'video', 'podcast'];
   const EXPIRY_OPTIONS: { value: BookmarkExpiryDays; label: string }[] = [
@@ -28,6 +30,34 @@
   let edit = $state({ url: '', type: 'news' as FeedType, title: '' });
   let editError = $state('');
   let confirmDelete = $state<number | null>(null);
+  let linkSelection = $state<Record<FeedType, LinkAppId>>({
+    news: linkApps.news.app,
+    video: linkApps.video.app,
+    podcast: linkApps.podcast.app,
+  });
+  let customPackage = $state<Record<FeedType, string>>({
+    news: linkApps.news.package ?? '',
+    video: linkApps.video.package ?? '',
+    podcast: linkApps.podcast.package ?? '',
+  });
+  let linkError = $state<Partial<Record<FeedType, string>>>({});
+
+  function chooseLinkApp(type: FeedType, app: LinkAppId) {
+    linkSelection[type] = app;
+    linkError[type] = '';
+    if (app !== 'custom') setLinkApp(type, { app });
+    else if (isPackageName(customPackage[type].trim())) saveCustomPackage(type);
+  }
+
+  function saveCustomPackage(type: FeedType) {
+    const value = customPackage[type].trim();
+    if (!isPackageName(value)) {
+      linkError[type] = 'Bitte einen Paketnamen wie «org.example.app» eingeben.';
+      return;
+    }
+    linkError[type] = '';
+    setLinkApp(type, { app: 'custom', package: value });
+  }
 
   async function load() {
     try {
@@ -244,6 +274,45 @@
   </div>
 </section>
 
+<section class="block" aria-labelledby="h-links">
+  <h2 id="h-links">Links öffnen</h2>
+  <div class="sheet settings links">
+    <p class="meta links-note">
+      Gilt nur auf diesem Gerät und nur unter Android. Ist die gewählte App nicht installiert, öffnet sich der Link im Browser.
+    </p>
+    {#each TYPES as type (type)}
+      <div class="setting-row link-row" data-testid="link-app-{type}">
+        <label class="title" for="link-app-{type}">{TYPE_LABEL[type]}</label>
+        <select
+          id="link-app-{type}"
+          class="input"
+          value={linkSelection[type]}
+          onchange={(e) => chooseLinkApp(type, e.currentTarget.value as LinkAppId)}
+        >
+          {#each LINK_APPS[type] as app (app)}<option value={app}>{LINK_APP_LABEL[app]}</option>{/each}
+        </select>
+        {#if linkSelection[type] === 'custom'}
+          <label class="field custom-package">
+            Paketname der App
+            <input
+              class="input"
+              bind:value={customPackage[type]}
+              onchange={() => saveCustomPackage(type)}
+              placeholder="org.example.app"
+              autocapitalize="off"
+              autocomplete="off"
+              spellcheck="false"
+              aria-invalid={linkError[type] ? 'true' : undefined}
+            />
+            <span class="meta">Steht in der Play-Store-Adresse der App nach «id=».</span>
+          </label>
+          {#if linkError[type]}<p class="notice error custom-package" role="alert">{linkError[type]}</p>{/if}
+        {/if}
+      </div>
+    {/each}
+  </div>
+</section>
+
 <section class="block" aria-labelledby="h-info">
   <h2 id="h-info">Info</h2>
   <dl class="sheet info">
@@ -285,6 +354,7 @@
   }
 
   #h-bookmarks,
+  #h-links,
   #h-info {
     margin-bottom: 0.75rem;
   }
@@ -318,6 +388,26 @@
     margin: 0.65rem 0 0;
     color: var(--soft);
     font-size: var(--step--1);
+  }
+
+  .links-note {
+    margin: 0 0 0.35rem;
+  }
+
+  .link-row {
+    display: grid;
+    grid-template-columns: minmax(6.5rem, 1fr) minmax(0, 15rem);
+    padding-block: 0.6rem;
+    border-top: 1px solid var(--line);
+  }
+
+  .links-note + .link-row {
+    border-top: 0;
+  }
+
+  .custom-package {
+    grid-column: 1 / -1;
+    margin: 0;
   }
 
   .info {

@@ -6,6 +6,7 @@
   import UndoToast from '../components/UndoToast.svelte';
   import { api, type Cockpit, type FeedItem, type FeedType } from '../lib/api';
   import { TYPE_LABEL } from '../lib/format';
+  import { linkFor } from '../lib/linkApps.svelte';
   import { router } from '../lib/router.svelte';
   import { taskDraftFromFeedItem } from '../lib/swipe';
 
@@ -189,13 +190,14 @@
           </div>
           <ul class="list">
             {#each expiredBookmarks.items as item (item.id)}
+              {@const link = linkFor(item)}
               <li class="review-item" data-testid="expired-bookmark">
                 <p class="meta">{item.sourceTitle}</p>
-                {#if item.url}
+                {#if link}
                   <a
                     class="review-title"
-                    href={item.url}
-                    target="_blank"
+                    href={link.href}
+                    target={link.app ? undefined : '_blank'}
                     rel="noopener noreferrer"
                     onclick={() => void markRead(item)}
                     onauxclick={() => void markRead(item)}

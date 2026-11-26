@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, type BookmarkExpiryDays, type FeedItem, type ItemStatePatch } from '../lib/api';
   import { ago, TYPE_SINGULAR } from '../lib/format';
+  import { linkFor } from '../lib/linkApps.svelte';
   import { askAgent } from '../lib/router.svelte';
   import Icon from './Icon.svelte';
   import SwipeRow from './SwipeRow.svelte';
@@ -31,6 +32,7 @@
 
   let error = $state('');
 
+  const link = $derived(linkFor(item));
   const expired = $derived(!compact && item.bookmarked && item.bookmarkExpired);
   const showPermanentToggle = $derived(
     !compact && bookmarkedView && item.bookmarked && !item.bookmarkExpired && (item.bookmarkExpiresAt !== null || defaultExpiryDays !== null),
@@ -58,8 +60,15 @@
       <span>{item.sourceTitle}</span>
       <span>{ago(item.publishedAt ?? item.fetchedAt)}</span>
     </p>
-    {#if item.url}
-      <a class="title" href={item.url} target="_blank" rel="noopener noreferrer" onclick={opened} onauxclick={opened}>
+    {#if link}
+      <a
+        class="title"
+        href={link.href}
+        target={link.app ? undefined : '_blank'}
+        rel="noopener noreferrer"
+        onclick={opened}
+        onauxclick={opened}
+      >
         {item.title}<span class="external"><Icon name="external" size={15} /></span>
       </a>
     {:else}

@@ -42,6 +42,7 @@ export interface FeedItem {
   id: number;
   sourceId: number;
   sourceTitle: string;
+  sourceUrl: string;
   type: FeedType;
   title: string;
   url: string | null;
