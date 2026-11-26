@@ -21,6 +21,7 @@ export type {
 } from './service.js';
 export { BOOKMARK_EXPIRY_OPTIONS, DEFAULT_BOOKMARK_EXPIRY_DAYS, FEED_TYPES, FeedService } from './service.js';
 export type { Fetcher, FetchOptions, FetchResult } from './net.js';
+export { FetchError, safeFetch } from './net.js';
 
 export interface FeedsModule {
   service: FeedService;

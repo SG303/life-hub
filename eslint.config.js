@@ -3,7 +3,7 @@ import svelte from 'eslint-plugin-svelte';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
-const MODULES = ['tasks', 'feeds', 'chat', 'cockpit'];
+const MODULES = ['tasks', 'feeds', 'chat', 'cockpit', 'integrations'];
 
 /**
  * Module boundaries: code outside a module may only import its public

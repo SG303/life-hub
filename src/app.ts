@@ -20,6 +20,7 @@ import { createMcpHandler, MIN_TOKEN_LENGTH } from './mcp/server.js';
 import { createChatModule, type ChatModule } from './modules/chat/index.js';
 import { createCockpitModule } from './modules/cockpit/index.js';
 import { createFeedsModule, type FeedsModule, type Fetcher } from './modules/feeds/index.js';
+import { createIntegrationsModule, type IntegrationsModule } from './modules/integrations/index.js';
 import { createTasksModule, type TasksModule } from './modules/tasks/index.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -52,6 +53,7 @@ export interface App {
   tasks: TasksModule;
   feeds: FeedsModule;
   chat: ChatModule;
+  integrations: IntegrationsModule;
   api: Router;
   uiServer: http.Server;
   mcpServer: http.Server;
@@ -71,13 +73,15 @@ export function createApp(config: Config, overrides: AppOverrides = {}): App {
     overrides.agentFetch,
   );
   const cockpit = createCockpitModule([tasks.cockpit, feeds.cockpit]);
+  const integrations = createIntegrationsModule(db, overrides.fetcher);
 
   const api = new Router()
     .get('/api/v1/health', () => ({ status: 'ok', version }))
     .mount('/api/v1/cockpit', cockpit.routes)
     .mount('/api/v1/tasks', tasks.routes)
     .mount('/api/v1/feeds', feeds.routes)
-    .mount('/api/v1/chat', chat.routes);
+    .mount('/api/v1/chat', chat.routes)
+    .mount('/api/v1/integrations', integrations.routes);
 
   const isTrustedProxy = ipMatcher(config.trustedProxies);
 
@@ -163,6 +167,7 @@ export function createApp(config: Config, overrides: AppOverrides = {}): App {
     tasks,
     feeds,
     chat,
+    integrations,
     api,
     uiServer,
     mcpServer,

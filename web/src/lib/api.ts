@@ -103,6 +103,35 @@ export interface Cockpit {
   };
 }
 
+export interface ScioSettings {
+  enabled: boolean;
+  url: string | null;
+}
+
+export interface ScioDeck {
+  id: number;
+  title: string;
+  subject: string | null;
+  due: number;
+  dueReviews: number;
+  newAvailable: number;
+  studyUrl: string;
+}
+
+export interface ScioData {
+  dueToday: number;
+  reviewsToday: number;
+  dailyGoal: number;
+  currentStreak: number;
+  deckCount: number;
+  decks: ScioDeck[];
+  decksUrl: string;
+}
+
+export type ScioSummary =
+  | { enabled: false }
+  | { enabled: true; state: 'ok' | 'error'; error: string | null; updatedAt: string | null; data: ScioData | null };
+
 export interface ChatContext {
   type: 'task' | 'feed_item';
   id: number;
@@ -172,6 +201,10 @@ export const api = {
   updateItem: (id: number, state: ItemStatePatch) => request<FeedItem>('PATCH', `/feeds/items/${id}`, state),
   markAllRead: (type?: FeedType) => request<{ updated: number }>('POST', '/feeds/items/mark-read', { type }),
 
+  scio: () => request<ScioSummary>('GET', '/integrations/scio'),
+  scioSettings: () => request<ScioSettings>('GET', '/integrations/scio/settings'),
+  updateScioSettings: (patch: Partial<ScioSettings>) => request<ScioSettings>('PATCH', '/integrations/scio/settings', patch),
+  checkScio: (url: string) => request<{ deckCount: number }>('POST', '/integrations/scio/check', { url }),
   agentStatus: () => request<{ configured: boolean; model: string | null; reachable: boolean | null }>('GET', '/chat/status'),
   context: (ctx: ChatContext) => request<{ title: string; text: string }>('GET', `/chat/context${query({ type: ctx.type, id: ctx.id })}`),
   threads: () => request<{ items: ChatThread[] }>('GET', '/chat/threads'),

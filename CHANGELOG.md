@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-26
+
+### Added
+
+- **Verbundene Apps** in **Mehr**: connect a Scio instance (on/off, address, **Verbindung prüfen**). **Heute** then shows a **Lernen** shelf with up to eight decks that have due flashcards, most due first, each split into reviews and new cards and linking to its study page in Scio, plus today's progress towards the daily goal. When nothing is due, it says so in one line. Life Hub only reads from Scio, caches the result for 5 minutes and keeps the last state with its time when Scio is unreachable.
+
 ## [0.10.0] - 2026-11-26
 
 ### Added
@@ -121,7 +127,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SSRF protection checks the IPv4 address inside NAT64 addresses (`64:ff9b::/96`) and blocks the local-use NAT64 range.
 - OPML import skips feed URLs that contain a user name or password.
 
-[Unreleased]: https://github.com/SG303/life-hub/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/SG303/life-hub/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/SG303/life-hub/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/SG303/life-hub/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/SG303/life-hub/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/SG303/life-hub/compare/v0.7.0...v0.8.0

@@ -1,10 +1,11 @@
 <script lang="ts">
   import FeedEntry from '../components/FeedEntry.svelte';
+  import ScioShelf from '../components/ScioShelf.svelte';
   import Icon from '../components/Icon.svelte';
   import TaskCreateSheet from '../components/TaskCreateSheet.svelte';
   import TaskItem from '../components/TaskItem.svelte';
   import UndoToast from '../components/UndoToast.svelte';
-  import { api, type Cockpit, type FeedItem, type FeedType } from '../lib/api';
+  import { api, type Cockpit, type FeedItem, type FeedType, type ScioSummary } from '../lib/api';
   import { TYPE_LABEL } from '../lib/format';
   import { linkFor } from '../lib/linkApps.svelte';
   import { router } from '../lib/router.svelte';
@@ -12,6 +13,7 @@
 
   let cockpit = $state<Cockpit | undefined>();
   let agent = $state<{ configured: boolean; reachable: boolean | null } | undefined>();
+  let scio = $state<ScioSummary | undefined>();
   let error = $state('');
   let undo = $state<{ id: number; message: string; onundo: () => Promise<void> } | undefined>();
   let undoSeq = 0;
@@ -31,6 +33,7 @@
   $effect(() => {
     void load();
     api.agentStatus().then((s) => (agent = s), () => (agent = undefined));
+    api.scio().then((s) => (scio = s), () => (scio = undefined));
   });
 
   const due = $derived(cockpit ? [...cockpit.tasks.overdue, ...cockpit.tasks.dueToday] : []);
@@ -152,7 +155,7 @@
 
 {#if cockpit}
   <div class="layout">
-    <div class="left">
+    <div class="left" class:pinned={!scio?.enabled}>
       <section class="sheet slab" aria-labelledby="h-tasks">
         <div class="slab-head">
           <h2 id="h-tasks">Aufgaben</h2>
@@ -179,6 +182,7 @@
               : `Alle ${cockpit.tasks.openCount} offenen Aufgaben`}
         </a>
       </section>
+      {#if scio?.enabled}<ScioShelf summary={scio} />{/if}
     </div>
 
     <section class="right" aria-labelledby="h-feeds">
@@ -504,7 +508,8 @@
       align-items: start;
     }
 
-    .left {
+    /* Only the short tasks card stays in view; with the Scio shelf the column can outgrow the screen. */
+    .left.pinned {
       position: sticky;
       top: 1.75rem;
     }
