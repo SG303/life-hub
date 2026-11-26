@@ -2,7 +2,7 @@
   import Icon from '../components/Icon.svelte';
   import Sheet from '../components/Sheet.svelte';
   import SourceForm from '../components/SourceForm.svelte';
-  import { api, type BookmarkExpiryDays, type FeedSource, type FeedType } from '../lib/api';
+  import { api, type BookmarkExpiryDays, type FeedSource, type FeedType, type ScioSettings } from '../lib/api';
   import { ago, TYPE_LABEL, TYPE_SINGULAR } from '../lib/format';
   import { isPackageName, LINK_APP_LABEL, LINK_APPS, type LinkAppId } from '../lib/linkApps';
   import { linkApps, setLinkApp } from '../lib/linkApps.svelte';
@@ -41,6 +41,42 @@
     podcast: linkApps.podcast.package ?? '',
   });
   let linkError = $state<Partial<Record<FeedType, string>>>({});
+  let scio = $state<ScioSettings>({ enabled: false, url: null });
+  let scioUrl = $state('');
+  let scioBusy = $state(false);
+  let scioMessage = $state('');
+  let scioError = $state('');
+
+  async function scioRun(action: () => Promise<string>) {
+    if (scioBusy) return;
+    scioBusy = true;
+    scioMessage = '';
+    scioError = '';
+    try {
+      scioMessage = await action();
+    } catch (e) {
+      scioError = (e as Error).message;
+    } finally {
+      scioBusy = false;
+    }
+  }
+
+  function saveScio(enabled: boolean) {
+    return scioRun(async () => {
+      const url = scioUrl.trim();
+      scio = await api.updateScioSettings(url ? { url, enabled } : { url: null, enabled: false });
+      scioUrl = scio.url ?? '';
+      if (!scio.url) return 'Scio ist getrennt.';
+      return scio.enabled ? 'Gespeichert. Die fälligen Lernkarten erscheinen in «Heute».' : 'Scio ist ausgeschaltet.';
+    });
+  }
+
+  function checkScio() {
+    return scioRun(async () => {
+      const { deckCount } = await api.checkScio(scioUrl.trim());
+      return `Verbindung ok: ${deckCount === 1 ? '1 Deck' : `${deckCount} Decks`} gefunden.`;
+    });
+  }
 
   function chooseLinkApp(type: FeedType, app: LinkAppId) {
     linkSelection[type] = app;
@@ -74,6 +110,13 @@
     void load();
     api.feedSettings().then((s) => (bookmarkExpiryDays = s.bookmarkExpiryDays), () => undefined);
     api.health().then((h) => (version = h.version), () => undefined);
+    api.scioSettings().then(
+      (s) => {
+        scio = s;
+        scioUrl = s.url ?? '';
+      },
+      () => undefined,
+    );
     api.agentStatus().then((s) => (agent = s), () => undefined);
   });
 
@@ -313,6 +356,49 @@
   </div>
 </section>
 
+<section class="block" aria-labelledby="h-apps">
+  <h2 id="h-apps">Verbundene Apps</h2>
+  <div class="sheet settings" data-testid="app-scio">
+    <div class="setting-row">
+      <div class="setting-copy">
+        <p class="title">Scio</p>
+        <p class="meta">Zeigt in «Heute», welche Lernkarten fällig sind. life-hub liest nur und ändert in Scio nichts.</p>
+      </div>
+      <div class="segments" role="group" aria-label="Scio">
+        <button type="button" disabled={scioBusy} aria-pressed={scio.enabled} onclick={() => saveScio(true)}>An</button>
+        <button type="button" disabled={scioBusy} aria-pressed={!scio.enabled} onclick={() => saveScio(false)}>Aus</button>
+      </div>
+    </div>
+    <form
+      class="app-form"
+      onsubmit={(e) => {
+        e.preventDefault();
+        void saveScio(true);
+      }}
+    >
+      <label class="field">
+        Adresse von Scio
+        <input
+          class="input"
+          type="url"
+          bind:value={scioUrl}
+          placeholder="http://192.0.2.10:8001"
+          autocapitalize="off"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <span class="meta">Die Adresse, unter der du Scio im Browser öffnest, ohne «/api».</span>
+      </label>
+      <div class="app-actions">
+        <button class="button small" type="button" disabled={scioBusy || !scioUrl.trim()} onclick={checkScio}>Verbindung prüfen</button>
+        <button class="button primary small" type="submit" disabled={scioBusy}>Speichern</button>
+      </div>
+    </form>
+    {#if scioMessage}<p class="setting-status" role="status">{scioMessage}</p>{/if}
+    {#if scioError}<p class="notice error" role="alert">{scioError}</p>{/if}
+  </div>
+</section>
+
 <section class="block" aria-labelledby="h-info">
   <h2 id="h-info">Info</h2>
   <dl class="sheet info">
@@ -355,6 +441,7 @@
 
   #h-bookmarks,
   #h-links,
+  #h-apps,
   #h-info {
     margin-bottom: 0.75rem;
   }
@@ -388,6 +475,24 @@
     margin: 0.65rem 0 0;
     color: var(--soft);
     font-size: var(--step--1);
+  }
+
+  .app-form {
+    margin-top: 0.9rem;
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--line);
+  }
+
+  .app-form .field {
+    margin: 0;
+  }
+
+  .app-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
   }
 
   .links-note {

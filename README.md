@@ -11,11 +11,11 @@ Personal, self-hosted daily cockpit (PWA) bringing together tasks, RSS/Atom feed
 
 | View | What it does |
 | --- | --- |
-| **Heute** | Agent status dot, overdue and due-today tasks (evaluated in `TZ`), the next open tasks, a compact **Lesezeichen prüfen** review block when bookmarks have expired, and the newest unread News, Videos and Podcasts (bounded per type). |
+| **Heute** | Agent status dot, overdue and due-today tasks (evaluated in `TZ`), the next open tasks, a compact **Lesezeichen prüfen** review block when bookmarks have expired, a **Lernen** shelf with the decks that have due flashcards when [Scio](https://github.com/SG303/scio) is connected, and the newest unread News, Videos and Podcasts (bounded per type). |
 | **Aufgaben** | Create (via the **Neue Aufgabe** sheet), edit, check off, delete and filter tasks (title, note, `YYYY-MM-DD` due date, list). On touch devices, swipe right to complete/reopen (with Undo) or swipe left for **Bearbeiten** and **Löschen**. |
 | **Feeds** | Unified reader: filter by type, unread and `Gemerkt` (automatically showing read bookmarks too); toggle read/bookmark, review expired bookmarks (**Verlängern**, **Dauerhaft**, **Loslassen** with Undo), turn any entry into a task via the prefilled **Neue Aufgabe** sheet, or swipe right on touch devices to mark read/unread (with Undo) and swipe left for **Merken** and **Aufgabe**. Items open the original `http(s)` link (no embedded player), on Android optionally in the app chosen under **Mehr → Links öffnen**. Excerpts are plain text. **Neue Quelle** subscribes to a feed or YouTube channel. |
 | **Chat** | Chat with any OpenAI-compatible agent configured via environment variables. Replies stream live over SSE (with automatic fallback for non-streaming agents) while showing a live German trace of the agent's Life Hub MCP reads, stored collapsed on the finished reply. Threads are stored in Life Hub and listed as Angeheftet, Aktiv, Schlummernd and Erledigt: snooze a chat until a chosen time, settle it by hand, or let it settle automatically after 7 days without activity (per chat: never). On touch devices, swipe right to settle/reactivate (with Undo) or swipe left for **Schlummern**/**Aufwecken** and **Anheften**/**Lösen**. On phones a chat opens full screen with the composer at the bottom. **Agent fragen** on any task or feed item opens the composer with a visible, bounded snapshot. |
-| **Mehr** | Manage sources: add/edit/remove RSS/Atom feeds and YouTube channels (`/channel/UC…`, `@handle`, `/c/…`, `/user/…` are resolved to the channel RSS feed) and import OPML; configure the default bookmark expiry (7, 14, 30 days or Off); choose per type which Android app opens feed links on this device (**Links öffnen**, e.g. Brave, NewPipe, AntennaPod or a Spotify search; Android only, falls back to the browser); shows the version and agent status. The old `/quellen` address redirects here. |
+| **Mehr** | Manage sources: add/edit/remove RSS/Atom feeds and YouTube channels (`/channel/UC…`, `@handle`, `/c/…`, `/user/…` are resolved to the channel RSS feed) and import OPML; configure the default bookmark expiry (7, 14, 30 days or Off); choose per type which Android app opens feed links on this device (**Links öffnen**, e.g. Brave, NewPipe, AntennaPod or a Spotify search; Android only, falls back to the browser); connect other self-hosted apps under **Verbundene Apps** (currently Scio: on/off, address, **Verbindung prüfen**); shows the version and agent status. The old `/quellen` address redirects here. |
 
 The agent reads Life Hub through a separate, token-protected **MCP endpoint** (stateless Streamable HTTP, read-only tools `list_tasks`, `get_task`, `list_feed_items`, `get_feed_item`, `search`).
 
@@ -82,6 +82,15 @@ All settings are environment variables (see [`.env.example`](.env.example)):
 | `BACKUP_KEEP` | `7` | Number of daily and pre-migration backups to keep. |
 | `DATA_DIR` | `data` (`/data` in Docker) | SQLite database and backups. |
 
+### Connected apps (Scio)
+
+Under **Mehr → Verbundene Apps** you can connect a [Scio](https://github.com/SG303/scio) instance by its address, the one you open in the browser (for example `http://192.0.2.10:8001`). Life Hub then shows a **Lernen** shelf in **Heute**: up to eight decks with due flashcards (most due first, split into reviews and new cards), the daily goal and a link to each deck's study page in Scio.
+
+- Life Hub only reads (`GET /api/flashcards/streak`, `/api/flashcards/decks`, `/api/subjects`) and never changes anything in Scio. Scio needs no changes.
+- The request goes from the Life Hub server, not the browser, so the address must be reachable from the container (LAN or Tailscale address of the host, not `localhost`). The links in the shelf open the same address on your device.
+- The result is cached for 5 minutes; when Scio is unreachable, the shelf keeps the last state with its time (retried after a minute).
+- The address is stored in the database and may be a private address: this one configured target is exempt from the private-network block that applies to feeds.
+
 ### Backup and restore
 
 Life Hub writes a daily online backup (`VACUUM INTO`) and a backup before every schema migration to `/data/backups`. To restore:
@@ -124,7 +133,7 @@ npm run harness      # fixture feeds, fake YouTube, mock agent, Life Hub and HTT
 npm run release -- <major|minor|patch>   # prepare a release in the PR (see Release in AGENTS.md)
 ```
 
-The test harness (`test/harness`) runs without internet access or a real agent: it serves deterministic feeds (including XSS and prompt-injection payloads), a fake YouTube host, and a mock OpenAI-compatible agent that calls Life Hub's `/mcp` during each chat turn.
+The test harness (`test/harness`) runs without internet access or a real agent: it serves deterministic feeds (including XSS and prompt-injection payloads), a fake YouTube host, a fake Scio under `/scio`, and a mock OpenAI-compatible agent that calls Life Hub's `/mcp` during each chat turn.
 
 ### Structure
 
@@ -132,7 +141,7 @@ The test harness (`test/harness`) runs without internet access or a real agent: 
 src/
   server.ts, app.ts, config.ts   entry point, composition, configuration
   core/                          SQLite, migrations, backups, HTTP router, security headers
-  modules/{tasks,feeds,chat,cockpit}/  domains; others import only their index.ts
+  modules/{tasks,feeds,chat,cockpit,integrations}/  domains; others import only their index.ts
   mcp/                           MCP endpoint and read-only tools
 web/                             Svelte 5 PWA (talks only to /api/v1)
 test/                            Vitest tests, fixtures and the local harness

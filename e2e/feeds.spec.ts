@@ -40,7 +40,7 @@ test('manages sources: RSS, YouTube handle, podcast, edit, delete, OPML; refresh
   // Edit: rename the news source.
   await page.getByRole('button', { name: 'Bearbeiten: Testnachrichten' }).click();
   await page.getByLabel('Titel', { exact: true }).fill('Lokalnachrichten');
-  await page.getByRole('button', { name: 'Speichern' }).click();
+  await page.getByTestId('source').getByRole('button', { name: 'Speichern' }).click();
   await expect(sources.filter({ hasText: 'Lokalnachrichten' })).toBeVisible();
 
   // Delete the podcast (with confirmation).
