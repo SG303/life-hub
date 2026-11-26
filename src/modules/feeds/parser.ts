@@ -151,8 +151,11 @@ export function parseFeed(xml: string, baseUrl?: string): ParsedFeed {
     const items = (Array.isArray(rawEntries) ? rawEntries : [rawEntries]).map((entry) =>
       parseAtomEntry(entry as Node, baseUrl),
     );
+    // A channel's long-form uploads feed is titled just "Videos"; its author is the channel name.
+    const isLongFormUploads = textOf(atom['yt:playlistId']).startsWith('UULF');
+    const author = textOf(asNode(atom.author)?.name);
     return {
-      title: title(atom.title),
+      title: title(isLongFormUploads && author ? author : atom.title),
       siteUrl: atomLink(atom.link, baseUrl),
       isPodcast: items.some((item) => item.hasAudio),
       items,
