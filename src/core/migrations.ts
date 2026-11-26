@@ -110,4 +110,24 @@ export const migrations: { version: number; sql: string }[] = [
       CREATE INDEX feed_items_bookmarked ON feed_items (is_bookmarked, bookmark_expires_at);
     `,
   },
+  {
+    // YouTube without Shorts: channel feeds move to the long-form uploads feed (playlist UULF…)
+    // and stored Shorts are removed. Their tombstones in feed_seen_items keep them from returning.
+    // Only URLs ending right after the channel ID are rewritten (12 + 24 characters).
+    version: 5,
+    sql: `
+      UPDATE feed_sources
+      SET url = replace(url, '?channel_id=UC', '?playlist_id=UULF'), etag = NULL, last_modified = NULL
+      WHERE (url GLOB 'https://www.youtube.com/feeds/videos.xml?channel_id=UC*'
+          OR url GLOB 'https://youtube.com/feeds/videos.xml?channel_id=UC*')
+        AND length(url) = length(substr(url, 1, instr(url, '?channel_id=UC') - 1)) + 36
+        AND NOT EXISTS (
+          SELECT 1 FROM feed_sources other
+          WHERE other.url = replace(feed_sources.url, '?channel_id=UC', '?playlist_id=UULF')
+        );
+      DELETE FROM feed_items
+      WHERE url GLOB 'https://www.youtube.com/shorts/*' OR url GLOB 'https://youtube.com/shorts/*'
+         OR url GLOB 'https://m.youtube.com/shorts/*';
+    `,
+  },
 ];

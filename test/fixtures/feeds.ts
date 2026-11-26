@@ -58,30 +58,49 @@ export function newsRss(count = 15, origin = 'https://news.example'): string {
 </rss>`;
 }
 
-/** YouTube-style Atom feed with `yt:videoId` entries. */
-export function youtubeAtom(channelId = CHANNEL_ID, count = 3): string {
-  const entries = Array.from({ length: count }, (_, index) => {
-    const n = index + 1;
-    return `<entry>
-      <id>yt:video:vid${n}xxxxxxx</id>
-      <yt:videoId>vid${n}xxxxxxx</yt:videoId>
+/**
+ * YouTube-style Atom feed with `yt:videoId` entries. The channel feed also lists
+ * `shorts` Shorts (linked as `/shorts/<id>`); `longForm` renders the channel's
+ * long-form uploads feed (playlist `UULF…`, titled "Videos", no Shorts).
+ */
+export function youtubeAtom(channelId = CHANNEL_ID, count = 3, { longForm = false, shorts = 0 } = {}): string {
+  const entry = (id: string, title: string, link: string, offset: number, description: string) => `<entry>
+      <id>yt:video:${id}</id>
+      <yt:videoId>${id}</yt:videoId>
       <yt:channelId>${channelId}</yt:channelId>
-      <title>Testvideo ${n}</title>
-      <link rel="alternate" href="https://www.youtube.com/watch?v=vid${n}xxxxxxx"/>
-      <published>${day(index).toISOString()}</published>
-      <updated>${day(index).toISOString()}</updated>
+      <title>${title}</title>
+      <link rel="alternate" href="${link}"/>
+      <published>${day(offset).toISOString()}</published>
+      <updated>${day(offset).toISOString()}</updated>
       <media:group>
-        <media:title>Testvideo ${n}</media:title>
-        <media:description>Beschreibung von Video ${n}.</media:description>
+        <media:title>${title}</media:title>
+        <media:description>${description}</media:description>
       </media:group>
     </entry>`;
-  }).join('\n');
+  const videos = Array.from({ length: count }, (_, index) =>
+    entry(`vid${index + 1}xxxxxxx`, `Testvideo ${index + 1}`, `https://www.youtube.com/watch?v=vid${index + 1}xxxxxxx`, index, `Beschreibung von Video ${index + 1}.`),
+  );
+  const shortEntries = longForm
+    ? []
+    : Array.from({ length: shorts }, (_, index) =>
+        entry(`sho${index + 1}xxxxxxx`, `Testshort ${index + 1}`, `https://www.youtube.com/shorts/sho${index + 1}xxxxxxx`, index, `Beschreibung von Short ${index + 1}.`),
+      );
+  const playlistId = `UULF${channelId.slice(2)}`;
+  const head = longForm
+    ? `<id>yt:playlist:${playlistId}</id>
+  <yt:playlistId>${playlistId}</yt:playlistId>
+  <title>Videos</title>`
+    : `<id>yt:channel:${channelId}</id>
+  <title>Testkanal</title>`;
   return `<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
-  <id>yt:channel:${channelId}</id>
-  <title>Testkanal</title>
+  ${head}
   <link rel="alternate" href="https://www.youtube.com/channel/${channelId}"/>
-  ${entries}
+  <author>
+    <name>Testkanal</name>
+    <uri>https://www.youtube.com/channel/${channelId}</uri>
+  </author>
+  ${[...shortEntries, ...videos].join('\n')}
 </feed>`;
 }
 

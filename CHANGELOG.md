@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-26
+
+### Changed
+
+- **YouTube** channels no longer show Shorts. New and existing channels use YouTube's feed of regular uploads (without Shorts and livestreams), and Shorts already in the list are removed. If YouTube stops offering that feed for a channel, Life Hub falls back to the full channel feed and still leaves out Shorts.
+
 ## [0.12.0] - 2026-11-26
 
 ### Changed
@@ -133,7 +139,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SSRF protection checks the IPv4 address inside NAT64 addresses (`64:ff9b::/96`) and blocks the local-use NAT64 range.
 - OPML import skips feed URLs that contain a user name or password.
 
-[Unreleased]: https://github.com/SG303/life-hub/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/SG303/life-hub/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/SG303/life-hub/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/SG303/life-hub/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/SG303/life-hub/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/SG303/life-hub/compare/v0.9.0...v0.10.0

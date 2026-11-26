@@ -49,8 +49,11 @@ export function createFixtureHandler(origin: () => string) {
         send(200, 'application/atom+xml', blogAtom());
         return true;
       case '/feeds/videos.xml':
-        if (url.searchParams.get('channel_id') !== CHANNEL_ID) send(404, 'text/plain', 'unknown channel');
-        else send(200, 'application/atom+xml', youtubeAtom());
+        if (url.searchParams.get('playlist_id') === `UULF${CHANNEL_ID.slice(2)}`) {
+          send(200, 'application/atom+xml', youtubeAtom(CHANNEL_ID, 3, { longForm: true }));
+        } else if (url.searchParams.get('channel_id') === CHANNEL_ID) {
+          send(200, 'application/atom+xml', youtubeAtom(CHANNEL_ID, 3, { shorts: 2 }));
+        } else send(404, 'text/plain', 'unknown channel');
         return true;
       case `/${CHANNEL_HANDLE}`:
         send(200, 'text/html; charset=utf-8', channelHtml());

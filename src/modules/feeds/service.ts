@@ -7,7 +7,14 @@ import { FetchError, safeFetch, type FetchOptions, type Fetcher } from './net.js
 import { parseOpml } from './opml.js';
 import { dedupKey, FeedParseError, parseFeed, type ParsedFeed, type ParsedItem } from './parser.js';
 import { safeHttpUrl, truncate } from './sanitize.js';
-import { isYouTubeUrl, resolveYouTubeFeed, YouTubeResolveError } from './youtube.js';
+import {
+  channelFeedFallback,
+  isShortsLink,
+  isYouTubeUrl,
+  preferLongFormFeed,
+  resolveYouTubeFeed,
+  YouTubeResolveError,
+} from './youtube.js';
 
 export const FEED_TYPES = ['news', 'video', 'podcast'] as const;
 export type FeedType = (typeof FEED_TYPES)[number];
@@ -176,6 +183,10 @@ const SOURCE_SELECT = `
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+type FetchedFeed =
+  | { notModified: true }
+  | { notModified: false; feed: ParsedFeed; etag: string | null; lastModified: string | null };
+
 /** Maps fetch and parse failures to a short German message (safe to store and show). */
 export function describeFeedError(error: unknown): string {
   if (error instanceof YouTubeResolveError) return error.message;
@@ -265,9 +276,26 @@ export class FeedService {
     }
   }
 
-  private async fetchFeed(url: string, row?: SourceRow): Promise<
-    { notModified: true } | { notModified: false; feed: ParsedFeed; etag: string | null; lastModified: string | null }
-  > {
+  /**
+   * Fetches and parses a feed. YouTube Shorts are always dropped; if a long-form
+   * YouTube feed is gone (404), the channel feed is fetched instead.
+   */
+  private async fetchFeed(url: string, row?: SourceRow): Promise<FetchedFeed> {
+    let fetched: FetchedFeed;
+    try {
+      fetched = await this.fetchFeedOnce(url, row);
+    } catch (error) {
+      const fallback = channelFeedFallback(url, this.config.youtubeBaseUrl);
+      if (!fallback || !(error instanceof FetchError && error.status === 404)) throw error;
+      fetched = await this.fetchFeedOnce(fallback);
+    }
+    if (!fetched.notModified && isYouTubeUrl(new URL(url), this.config.youtubeBaseUrl)) {
+      fetched.feed.items = fetched.feed.items.filter((item) => !isShortsLink(item.link));
+    }
+    return fetched;
+  }
+
+  private async fetchFeedOnce(url: string, row?: SourceRow): Promise<FetchedFeed> {
     const headers: Record<string, string> = {};
     if (row?.last_fetched_at && row.etag) headers['If-None-Match'] = row.etag;
     if (row?.last_fetched_at && row.last_modified) headers['If-Modified-Since'] = row.last_modified;
@@ -302,7 +330,7 @@ export class FeedService {
   async addSource(input: { url: string; type?: FeedType; title?: string }): Promise<FeedSource> {
     const url = await this.normalizeUrl(input.url);
     this.assertUniqueUrl(url);
-    let fetched: Awaited<ReturnType<FeedService['fetchFeed']>>;
+    let fetched: FetchedFeed;
     try {
       fetched = await this.fetchFeed(url);
     } catch (error) {
@@ -390,11 +418,12 @@ export class FeedService {
         `INSERT INTO feed_sources (title, url, type, type_auto, created_at) VALUES (?, ?, ?, 1, ?)`,
       );
       for (const entry of parsed.entries) {
-        if (exists.get(entry.url)) {
+        const url = preferLongFormFeed(entry.url, this.config.youtubeBaseUrl);
+        if (exists.get(url)) {
           result.skipped++;
           continue;
         }
-        insert.run(entry.title ?? new URL(entry.url).hostname, entry.url, this.detectType(entry.url, undefined, entry.hint), now);
+        insert.run(entry.title ?? new URL(url).hostname, url, this.detectType(url, undefined, entry.hint), now);
         result.added++;
       }
     });

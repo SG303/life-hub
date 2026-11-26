@@ -1,6 +1,6 @@
 {
   "name": "life-hub",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "private": true,
   "description": "Personal self-hosted daily cockpit for tasks, feeds and a swappable AI agent",
   "license": "MIT",

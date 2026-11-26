@@ -26,7 +26,8 @@ import { fakeFetcher, testConfig, type Route } from './helpers.ts';
 
 const NEWS = 'https://news.example/feed.xml';
 const PODCAST = 'https://podcast.example/feed.xml';
-const YT_FEED = `https://www.youtube.com/feeds/videos.xml?channel_id=${CHANNEL_ID}`;
+const YT_CHANNEL_FEED = `https://www.youtube.com/feeds/videos.xml?channel_id=${CHANNEL_ID}`;
+const YT_FEED = `https://www.youtube.com/feeds/videos.xml?playlist_id=UULF${CHANNEL_ID.slice(2)}`;
 
 function service(routes: Record<string, Route | (() => Route)>, env: Record<string, string> = {}) {
   const fetcher = fakeFetcher(routes);
@@ -55,7 +56,7 @@ describe('feed parsing', () => {
   });
 
   it('parses YouTube Atom with yt:videoId and media description', () => {
-    const feed = parseFeed(youtubeAtom(), YT_FEED);
+    const feed = parseFeed(youtubeAtom(), YT_CHANNEL_FEED);
     expect(feed.items[0]).toMatchObject({
       guid: 'yt:video:vid1xxxxxxx',
       videoId: 'vid1xxxxxxx',
@@ -222,9 +223,32 @@ describe('YouTube channel resolution', () => {
   });
 
   it('subscribes to a handle URL as a video source', async () => {
-    const { feeds } = service({ [`https://www.youtube.com/${CHANNEL_HANDLE}`]: channelHtml(), [YT_FEED]: youtubeAtom() });
+    const { feeds } = service({
+      [`https://www.youtube.com/${CHANNEL_HANDLE}`]: channelHtml(),
+      [YT_FEED]: youtubeAtom(CHANNEL_ID, 3, { longForm: true }),
+    });
     const source = await feeds.addSource({ url: `https://youtube.com/${CHANNEL_HANDLE}` });
-    expect(source).toMatchObject({ url: YT_FEED, type: 'video', itemCount: 3 });
+    expect(source).toMatchObject({ url: YT_FEED, title: 'Testkanal', type: 'video', itemCount: 3 });
+  });
+
+  it('subscribes to a pasted channel feed URL as its long-form feed', async () => {
+    const { feeds, fetcher } = service({ [YT_FEED]: youtubeAtom(CHANNEL_ID, 3, { longForm: true }) });
+    const source = await feeds.addSource({ url: YT_CHANNEL_FEED });
+    expect(source.url).toBe(YT_FEED);
+    expect(fetcher.calls).toEqual([YT_FEED]);
+  });
+
+  it('falls back to the channel feed without Shorts when the long-form feed is gone', async () => {
+    const { feeds, fetcher } = service({ [YT_CHANNEL_FEED]: youtubeAtom(CHANNEL_ID, 3, { shorts: 2 }) });
+    const source = await feeds.addSource({ url: `https://www.youtube.com/channel/${CHANNEL_ID}` });
+    expect(fetcher.calls).toEqual([YT_FEED, YT_CHANNEL_FEED]);
+    expect(source).toMatchObject({ url: YT_FEED, itemCount: 3 });
+    expect(feeds.listItems().items.map((item) => item.url)).not.toContainEqual(expect.stringContaining('/shorts/'));
+  });
+
+  it('keeps Shorts links in non-YouTube feeds', async () => {
+    const { feeds } = service({ [NEWS]: youtubeAtom(CHANNEL_ID, 1, { shorts: 1 }) });
+    expect((await feeds.addSource({ url: NEWS })).itemCount).toBe(2);
   });
 });
 
@@ -234,7 +258,7 @@ describe('OPML import', () => {
     await feeds.addSource({ url: NEWS });
     const doc = opml([
       { url: NEWS, title: 'Schon da' },
-      { url: YT_FEED, title: 'Kanal' },
+      { url: YT_CHANNEL_FEED, title: 'Kanal' },
       { url: PODCAST, title: 'Mein Podcast' },
       { url: 'https://blog.example/atom.xml', title: 'Blog' },
       { url: 'https://blog.example/atom.xml', title: 'Blog doppelt' },
@@ -244,6 +268,7 @@ describe('OPML import', () => {
     expect(feeds.importOpml(doc)).toEqual({ added: 3, skipped: 2, invalid: 2 });
     const types = Object.fromEntries(feeds.listSources().map((s) => [s.title, s.type]));
     expect(types).toMatchObject({ Kanal: 'video', 'Mein Podcast': 'podcast', Blog: 'news' });
+    expect(feeds.listSources().find((s) => s.title === 'Kanal')!.url).toBe(YT_FEED);
   });
 
   it('refines the auto-detected type on the first fetch', async () => {
@@ -529,5 +554,45 @@ describe('expiring bookmarks', () => {
     expect(feeds.pruneRetention(new Date())).toEqual({ items: 1 });
     expect(feeds.getItem(first!.id)).toBeUndefined();
     expect(feeds.getItem(second!.id)).toBeDefined();
+  });
+});
+
+describe('YouTube without Shorts', () => {
+  it('migration v5 moves channel feeds to long-form feeds and removes stored Shorts', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'life-hub-mig5-'));
+    try {
+      const legacy = new DatabaseSync(path.join(dir, DB_FILE));
+      for (const m of migrations.filter((m) => m.version <= 4)) {
+        legacy.exec(m.sql);
+        legacy.exec(`PRAGMA user_version = ${m.version}`);
+      }
+      const insert = legacy.prepare(
+        "INSERT INTO feed_sources (title, url, type, etag, created_at) VALUES (?, ?, 'video', 'e', '2026-01-01T00:00:00.000Z')",
+      );
+      insert.run('Kanal', YT_CHANNEL_FEED);
+      insert.run('Mit Zusatz', `${YT_CHANNEL_FEED.replace(CHANNEL_ID, 'UCzyxwvutsrqponmlkjihgfe')}&x=1`);
+      insert.run('News', NEWS);
+      legacy
+        .prepare(
+          `INSERT INTO feed_items (source_id, dedup_key, title, url, summary, fetched_at, is_read, is_bookmarked)
+           VALUES (1, 'k1', 'Video', 'https://www.youtube.com/watch?v=vid1xxxxxxx', '', '2026-01-01T00:00:00.000Z', 0, 0),
+                  (1, 'k2', 'Short', 'https://www.youtube.com/shorts/sho1xxxxxxx', '', '2026-01-01T00:00:00.000Z', 0, 1)`,
+        )
+        .run();
+      legacy.close();
+
+      const db = openDatabase(dir);
+      const feeds = new FeedService(db, testConfig().feeds, fakeFetcher({}));
+      const urls = Object.fromEntries(feeds.listSources().map((s) => [s.title, s.url]));
+      expect(urls).toEqual({
+        Kanal: YT_FEED,
+        'Mit Zusatz': `${YT_CHANNEL_FEED.replace(CHANNEL_ID, 'UCzyxwvutsrqponmlkjihgfe')}&x=1`,
+        News: NEWS,
+      });
+      expect(feeds.listItems().items.map((item) => item.title)).toEqual(['Video']);
+      db.close();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
