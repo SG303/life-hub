@@ -33,6 +33,16 @@
   });
 
   const due = $derived(cockpit ? [...cockpit.tasks.overdue, ...cockpit.tasks.dueToday] : []);
+  // One card, grouped by urgency; undated tasks come last in «Demnächst» (server order).
+  const groups = $derived(
+    cockpit
+      ? [
+          { label: 'Überfällig', tasks: cockpit.tasks.overdue },
+          { label: 'Heute', tasks: cockpit.tasks.dueToday },
+          { label: 'Demnächst', tasks: cockpit.tasks.upcoming.slice(0, 3) },
+        ]
+      : [],
+  );
   const expiredBookmarks = $derived(cockpit?.feeds.expiredBookmarks);
   const STATE_LABEL = { up: 'erreichbar', down: 'nicht erreichbar', off: 'nicht konfiguriert' } as const;
   const types: FeedType[] = ['news', 'video', 'podcast'];
@@ -142,20 +152,24 @@
 {#if cockpit}
   <div class="layout">
     <div class="left">
-      <section class="sheet slab" aria-labelledby="h-due">
+      <section class="sheet slab" aria-labelledby="h-tasks">
         <div class="slab-head">
-          <h2 id="h-due">Heute fällig</h2>
-          {#if due.length}<span class="meta">{due.length} offen</span>{/if}
+          <h2 id="h-tasks">Aufgaben</h2>
+          {#if due.length}<span class="meta">{due.length} heute</span>{/if}
         </div>
-        {#if due.length}
-          <ul class="list">
-            {#each due as task (task.id)}
-              <TaskItem {task} today={cockpit.tasks.today} compact onchange={load} />
-            {/each}
-          </ul>
-        {:else}
+        {#if !due.length}
           <p class="empty">Heute ist nichts fällig.</p>
         {/if}
+        {#each groups as group (group.label)}
+          {#if group.tasks.length}
+            <h3 class="group" class:warn={group.label === 'Überfällig'}>{group.label}</h3>
+            <ul class="list" class:later={group.label === 'Demnächst'}>
+              {#each group.tasks as task (task.id)}
+                <TaskItem {task} today={cockpit.tasks.today} compact onchange={load} />
+              {/each}
+            </ul>
+          {/if}
+        {/each}
         <a class="more" href="/aufgaben" onclick={(e) => go(e, '/aufgaben')}>
           {cockpit.tasks.openCount === 0
             ? 'Aufgabe erfassen'
@@ -164,17 +178,6 @@
               : `Alle ${cockpit.tasks.openCount} offenen Aufgaben`}
         </a>
       </section>
-
-      {#if cockpit.tasks.upcoming.length}
-        <section class="sheet next" aria-labelledby="h-next">
-          <h2 id="h-next">Als Nächstes</h2>
-          <ul class="list">
-            {#each cockpit.tasks.upcoming as task (task.id)}
-              <TaskItem {task} today={cockpit.tasks.today} compact onchange={load} />
-            {/each}
-          </ul>
-        </section>
-      {/if}
     </div>
 
     <section class="right" aria-labelledby="h-feeds">
@@ -350,14 +353,29 @@
     text-decoration: underline;
   }
 
-  .next {
-    margin-top: 1rem;
-    padding-top: 1rem;
+  .group {
+    display: block;
+    margin: 0;
+    padding: 0.7rem 0 0;
+    border-top: 1px solid var(--line);
+    color: var(--soft);
+    font-size: var(--step--1);
+    font-weight: 650;
   }
 
-  .next h2 {
-    font-size: 1.125rem;
-    margin-bottom: 0.25rem;
+  .slab-head + .group {
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .group.warn {
+    color: var(--warn);
+  }
+
+  /* Upcoming tasks recede so today's stand out. */
+  .later :global(.title) {
+    color: var(--soft);
+    font-weight: 500;
   }
 
   .review {

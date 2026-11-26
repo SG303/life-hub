@@ -144,7 +144,7 @@ test('shows a German error with retry when the agent is down, while other views 
   // Everything else still works.
   await toChatList(page);
   await nav(page, 'Heute');
-  await expect(page.getByRole('heading', { name: 'Heute fällig', level: 2 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Aufgaben', level: 2 })).toBeVisible();
   await nav(page, 'Aufgaben');
   await addTask(page, { title: `Trotz Agent-Ausfall ${tag}` });
   await expect(page.getByTestId('task').filter({ hasText: `Trotz Agent-Ausfall ${tag}` })).toBeVisible();

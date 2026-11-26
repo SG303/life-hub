@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, type Task } from '../lib/api';
-  import { dueLabel, isOverdue } from '../lib/format';
+  import { compactLabel, dueLabel, isOverdue } from '../lib/format';
   import { askAgent } from '../lib/router.svelte';
   import Icon from './Icon.svelte';
   import SwipeRow from './SwipeRow.svelte';
@@ -37,6 +37,7 @@
   let draft = $state({ title: '', note: '', dueDate: '', category: '' });
 
   const overdue = $derived(!task.done && isOverdue(task.dueDate, today));
+  const aside = $derived(compactLabel(task.dueDate, task.category, today));
 
   async function run(action: () => Promise<unknown>) {
     error = '';
@@ -99,16 +100,20 @@
       </form>
     {:else}
       <p class="title">{task.title}</p>
-      <p class="meta">
-        {#if task.dueDate && !(compact && task.dueDate === today && !task.done)}<span class="due">{dueLabel(task.dueDate, today)}</span>{/if}
-        {#if task.category}<span class="category">{task.category}</span>{/if}
-      </p>
-      {#if task.note && !compact}<p class="note">{task.note}</p>{/if}
+      {#if !compact}
+        <p class="meta">
+          {#if task.dueDate}<span class="due">{dueLabel(task.dueDate, today)}</span>{/if}
+          {#if task.category}<span class="category">{task.category}</span>{/if}
+        </p>
+        {#if task.note}<p class="note">{task.note}</p>{/if}
+      {/if}
     {/if}
     {#if error}<p class="notice error" role="alert">{error}</p>{/if}
   </div>
 
-  {#if !editing}
+  {#if compact}
+    {#if aside}<span class="aside" class:due={overdue}>{aside}</span>{/if}
+  {:else if !editing}
     <div class="actions">
       {#if confirmDelete}
         <span class="confirm">Aufgabe löschen?</span>
@@ -119,7 +124,7 @@
           <Icon name="agent" size={18} /><span>Agent fragen</span>
         </button>
       {/if}
-      {#if !compact && !confirmDelete}
+      {#if !confirmDelete}
         <button class="button quiet" type="button" onclick={startEdit} aria-label="Bearbeiten: {task.title}">
           <Icon name="edit" size={18} />
         </button>
@@ -294,11 +299,12 @@
     gap: 0.75rem;
   }
 
-  /* Compact (Heute): «Agent fragen» is an icon button beside the title. */
+  /* Compact (Heute): one line, title left, due date or list right. */
   .compact {
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
-    padding: 0.75rem 0;
+    gap: 0 0.6rem;
+    padding: 0.15rem 0;
     border-top: 1px solid var(--line);
   }
 
@@ -306,24 +312,26 @@
     border-top: 0;
   }
 
-  .compact .actions {
-    grid-column: 3;
-    grid-row: 1;
-    margin: 0 -0.5rem 0 0;
+  .compact .check {
+    margin: 0 0 0 -0.45rem;
   }
 
-  .compact .actions :global(.button) {
-    width: 2.75rem;
-    padding: 0;
-    justify-content: center;
+  .compact .ring {
+    width: 1.6rem;
+    height: 1.6rem;
   }
 
-  .compact .actions span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
+  .compact .title {
+    font-size: var(--step-0);
+    white-space: nowrap;
     overflow: hidden;
-    clip-path: inset(50%);
+    text-overflow: ellipsis;
+  }
+
+  .aside {
+    color: var(--soft);
+    font-size: var(--step--1);
+    white-space: nowrap;
   }
 
   @media (min-width: 640px) {
@@ -339,11 +347,8 @@
     }
 
     .compact {
+      grid-template-columns: auto minmax(0, 1fr) auto;
       align-items: center;
-    }
-
-    .compact .actions {
-      margin-top: 0;
     }
   }
 </style>

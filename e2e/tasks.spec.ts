@@ -50,6 +50,6 @@ test('creates, edits, filters, completes and deletes tasks; they survive a resta
 
   // Due today appears on Heute.
   await nav(page, 'Heute');
-  await expect(page.getByRole('heading', { name: 'Heute fällig' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Aufgaben', level: 2 })).toBeVisible();
   await expect(page.getByTestId('task').filter({ hasText: `Rechnung zahlen ${tag}` })).toBeVisible();
 });
