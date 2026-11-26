@@ -255,3 +255,48 @@ test('expiring bookmarks: setting in Mehr, calm active bookmark without countdow
   await expect(entries).toHaveCount(6);
   await expect(page.locator('[data-expired="true"]')).toHaveCount(3);
 });
+
+test.describe('on Android', () => {
+  test.use({ userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Mobile Safari/537.36' });
+
+  test('opens links in the app chosen per type under «Links öffnen»', async ({ page, request }) => {
+    const fixtures = await fixturesForApp();
+    const client = api(request);
+    await client.post('/feeds/sources', { url: `${fixtures}/feeds/news.xml` });
+    await client.post('/feeds/sources', { url: `${fixtures}/@lifehub-test` });
+    await client.post('/feeds/sources', { url: `${fixtures}/feeds/podcast.xml` });
+
+    await page.goto('/mehr');
+    await page.getByLabel('Videos', { exact: true }).selectOption({ label: 'NewPipe' });
+    await page.getByLabel('Podcasts', { exact: true }).selectOption({ label: 'AntennaPod' });
+    await page.getByLabel('News', { exact: true }).selectOption({ label: 'Andere App …' });
+    const packageField = page.getByTestId('link-app-news').getByLabel('Paketname der App');
+    await packageField.fill('kein paket');
+    await packageField.blur();
+    await expect(page.getByTestId('link-app-news').getByRole('alert')).toContainText('Paketname');
+    await packageField.fill('org.example.reader');
+    await packageField.blur();
+    await expect(page.getByTestId('link-app-news').getByRole('alert')).toHaveCount(0);
+
+    // The choice is stored on this device and survives a reload.
+    await page.reload();
+    await expect(page.getByLabel('Videos', { exact: true })).toHaveValue('newpipe');
+
+    await page.goto('/feeds');
+    const links = (type: string) => page.locator(`[data-testid="feed-item"][data-type="${type}"] a.title`).first();
+    await expect(links('video')).toHaveAttribute('href', /^intent:\/\/.+;package=org\.schabi\.newpipe;S\.browser_fallback_url=https?%3A/);
+    await expect(links('video')).not.toHaveAttribute('target', /.*/);
+    await expect(links('podcast')).toHaveAttribute(
+      'href',
+      /^intent:\/\/antennapod\.org\/deeplink\/subscribe\?url=[^#]*podcast\.xml#Intent;scheme=https;package=de\.danoeh\.antennapod;/,
+    );
+    await expect(links('news')).toHaveAttribute('href', /;package=org\.example\.reader;/);
+
+    // Back to Standard: plain link in a new tab again.
+    await page.goto('/mehr');
+    await page.getByLabel('Videos', { exact: true }).selectOption({ label: 'Standard' });
+    await page.goto('/feeds');
+    await expect(links('video')).toHaveAttribute('href', /^https?:\/\//);
+    await expect(links('video')).toHaveAttribute('target', '_blank');
+  });
+});

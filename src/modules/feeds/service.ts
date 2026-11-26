@@ -37,6 +37,8 @@ export interface FeedItem {
   id: number;
   sourceId: number;
   sourceTitle: string;
+  /** Feed address of the source, so clients can hand a podcast to a podcast app. */
+  sourceUrl: string;
   type: FeedType;
   title: string;
   url: string | null;
@@ -115,6 +117,7 @@ interface ItemRow {
   id: number;
   source_id: number;
   source_title: string;
+  source_url: string;
   type: FeedType;
   title: string;
   url: string | null;
@@ -148,6 +151,7 @@ function toItem(row: ItemRow, now: string): FeedItem {
     id: row.id,
     sourceId: row.source_id,
     sourceTitle: row.source_title,
+    sourceUrl: row.source_url,
     type: row.type,
     title: row.title,
     url: row.url,
@@ -162,7 +166,7 @@ function toItem(row: ItemRow, now: string): FeedItem {
 }
 
 const ITEM_SELECT = `
-  SELECT i.id, i.source_id, s.title AS source_title, s.type, i.title, i.url, i.summary,
+  SELECT i.id, i.source_id, s.title AS source_title, s.url AS source_url, s.type, i.title, i.url, i.summary,
          i.published_at, i.fetched_at, i.is_read, i.is_bookmarked, i.bookmark_expires_at
   FROM feed_items i JOIN feed_sources s ON s.id = i.source_id`;
 
