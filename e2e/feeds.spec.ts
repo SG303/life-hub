@@ -226,10 +226,12 @@ test('expiring bookmarks: setting in Mehr, calm active bookmark without countdow
 
   // Navigate to Feeds and toggle «Gemerkt»: «Ungelesen» turns off automatically, expired items appear at the top.
   await nav(page, 'Feeds');
-  await expect(page.getByRole('button', { name: 'Ungelesen' })).toHaveAttribute('aria-pressed', 'true');
-  await page.getByRole('button', { name: 'Gemerkt' }).click();
-  await expect(page.getByRole('button', { name: 'Gemerkt' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByRole('button', { name: 'Ungelesen' })).toHaveAttribute('aria-pressed', 'false');
+  const unreadToggle = page.getByRole('button', { name: 'Ungelesen', exact: true });
+  const bookmarkedToggle = page.getByRole('button', { name: 'Gemerkt', exact: true });
+  await expect(unreadToggle).toHaveAttribute('aria-pressed', 'true');
+  await bookmarkedToggle.click();
+  await expect(bookmarkedToggle).toHaveAttribute('aria-pressed', 'true');
+  await expect(unreadToggle).toHaveAttribute('aria-pressed', 'false');
 
   // 4 expired + 3 active/permanent = 7 bookmarked items total, first 4 marked expired.
   await expect(entries).toHaveCount(7);
