@@ -283,6 +283,49 @@ test('streams replies live with MCP tool trace, reconnects on reload and chat sw
   expect(foreign).toEqual([]);
 });
 
+test('a long reply keeps its start in view, the header dot shows the turn and «Neuster Text» jumps to the end', async ({ page }, info) => {
+  const tag = `${info.project.name}-${Date.now()}`;
+  await control('/agent/mode', { mode: 'sse', hold: true });
+  await page.goto('/chat?neu');
+  await send(page, `Lange Antwort bitte ${tag}`);
+
+  // While streaming, new words are wrapped so they can fade in, and the header dot turns hollow.
+  const streaming = page.getByTestId('message-assistant-streaming');
+  await expect(streaming).toContainText('Antwort vom Test-Agenten.');
+  await expect(streaming.locator('.w').first()).toBeAttached();
+  // The thin writing cursor sits after the last block.
+  const cursor = await streaming.evaluate((el) => {
+    const last = el.lastElementChild;
+    const block = last && /^(UL|OL)$/.test(last.tagName) ? last.lastElementChild : last;
+    return block ? getComputedStyle(block, '::after').content : 'none';
+  });
+  expect(cursor).not.toBe('none');
+  await expect(page.locator('.conv-head .dot')).toHaveClass(/writing/);
+
+  await control('/agent/release');
+  const reply = page.getByTestId('message-assistant').last();
+  await expect(reply).toContainText('Absatz 40 der langen Antwort.');
+  await expect(page.locator('.conv-head .dot')).not.toHaveClass(/writing|thinking/);
+
+  // The start of the reply stays visible instead of the view following the end.
+  const log = page.getByTestId('chat-log');
+  const position = () =>
+    log.evaluate((el) => {
+      const last = Array.from(el.querySelectorAll('[data-testid="message-assistant"]')).at(-1)!;
+      const top = last.getBoundingClientRect().top - el.getBoundingClientRect().top;
+      return { top, height: el.clientHeight, below: el.scrollHeight - el.scrollTop - el.clientHeight };
+    });
+  const before = await position();
+  expect(before.top).toBeGreaterThanOrEqual(-1);
+  expect(before.top).toBeLessThan(before.height);
+  expect(before.below).toBeGreaterThan(100);
+
+  const jump = page.getByRole('button', { name: 'Neuster Text' });
+  await jump.click();
+  await expect(jump).toBeHidden();
+  await expect.poll(async () => (await position()).below).toBeLessThan(48);
+});
+
 test('falls back for non-streaming agents and discards partial drafts on mid-stream failure with working retry', async ({ page }, info) => {
   const tag = `${info.project.name}-${Date.now()}`;
 

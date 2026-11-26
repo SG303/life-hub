@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-26
+
+### Changed
+
+- **Chat** feels more alive and is easier to read while the agent writes. The dot next to the model name in the conversation header now shows the turn: it breathes while the agent thinks, sends a thin ring outwards for each Life Hub read, turns into a ring while the reply is written and fills again when it is done (an ochre ring after an error). New words of the reply fade in softly behind a thin olive writing line. The view no longer chases the end of a long reply: it follows only until the start of the reply reaches the top, so you can read from the beginning; **Neuster Text** jumps to the end and keeps following. With reduced motion, the dot and the words stay still.
+
 ## [0.11.0] - 2026-11-26
 
 ### Added
@@ -127,7 +133,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SSRF protection checks the IPv4 address inside NAT64 addresses (`64:ff9b::/96`) and blocks the local-use NAT64 range.
 - OPML import skips feed URLs that contain a user name or password.
 
-[Unreleased]: https://github.com/SG303/life-hub/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/SG303/life-hub/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/SG303/life-hub/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/SG303/life-hub/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/SG303/life-hub/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/SG303/life-hub/compare/v0.8.0...v0.9.0

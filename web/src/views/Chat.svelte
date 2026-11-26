@@ -8,6 +8,7 @@
   import { api, type ChatContext, type ChatMessage, type ChatThread, type ToolTraceStep } from '../lib/api';
   import { ago } from '../lib/format';
   import { renderMarkdown } from '../lib/markdown';
+  import { streamMarkdown } from '../lib/streamWords';
   import { router } from '../lib/router.svelte';
   import { wakeLabel } from '../lib/snooze';
   import { threadUndoPatch } from '../lib/swipe';
@@ -37,7 +38,18 @@
   let settledShown = $state(SETTLED_PAGE);
   let liveText = $state('');
   let liveSteps = $state<ToolTraceStep[]>([]);
-  let autoScroll = $state(true);
+  let liveTurn = $state<HTMLElement | null>(null);
+  /**
+   * Scrolling while a reply streams. «anchor» follows the reply only until its start
+   * reaches the top and then stands still, so it can be read from the start; «end»
+   * follows the end (after «Neuster Text» or scrolling down by hand); «free» means the
+   * reader scrolled up and nothing moves until the next turn.
+   */
+  let follow = $state<'anchor' | 'end' | 'free'>('anchor');
+  /** A live turn was anchored since the last send or chat switch: keep the place when it ends. */
+  let anchored = false;
+  let lastScrollTop = -1;
+  let atEnd = $state(true);
 
   const threadId = $derived(Number(router.params.get('thread')) || undefined);
   const contextParam = $derived(router.params.get('kontext'));
@@ -54,6 +66,7 @@
   const sending = $derived(creating || (thread !== undefined && sendingIds.includes(thread.id)));
   const pending = $derived(sending || Boolean(thread?.pending));
   const streamingId = $derived(thread?.pending ? thread.id : undefined);
+  const turnFailed = $derived(!pending && messages.at(-1)?.role === 'error');
 
   async function loadThreads() {
     try {
@@ -88,7 +101,7 @@
 
   $effect(() => {
     const id = threadId;
-    autoScroll = true;
+    resetFollow();
     if (id) {
       // A thread just created by send() is already shown; its reply arrives with the send result.
       if (untrack(() => sendingIds.includes(id) && thread?.id === id)) return;
@@ -166,9 +179,37 @@
     };
   });
 
+  function resetFollow() {
+    follow = 'anchor';
+    anchored = false;
+  }
+
+  function isAtEnd(): boolean {
+    return !log || log.scrollHeight - log.scrollTop - log.clientHeight < 48;
+  }
+
+  function setScroll(top: number) {
+    if (!log) return;
+    if (Math.abs(log.scrollTop - top) > 1) log.scrollTop = top;
+    lastScrollTop = log.scrollTop;
+  }
+
   function onLogScroll() {
     if (!log) return;
-    autoScroll = log.scrollHeight - log.scrollTop - log.clientHeight < 48;
+    atEnd = isAtEnd();
+    if (Math.abs(log.scrollTop - lastScrollTop) <= 2) return; // our own scroll
+    const up = log.scrollTop < lastScrollTop;
+    lastScrollTop = log.scrollTop;
+    if (!pending) return;
+    if (atEnd) follow = 'end';
+    else if (up) follow = 'free';
+  }
+
+  function jumpToEnd() {
+    if (!log) return;
+    if (pending) follow = 'end';
+    const smooth = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    log.scrollTo({ top: log.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
   }
 
   $effect(() => {
@@ -176,7 +217,17 @@
     void liveText;
     void liveSteps.length;
     void pending;
-    if (autoScroll && log) log.scrollTop = log.scrollHeight;
+    if (!log) return;
+    const bottom = log.scrollHeight - log.clientHeight;
+    if (follow === 'end') setScroll(bottom);
+    else if (follow === 'anchor') {
+      if (liveTurn) {
+        anchored = true;
+        const start = liveTurn.getBoundingClientRect().top - log.getBoundingClientRect().top + log.scrollTop - 10;
+        setScroll(Math.max(log.scrollTop, Math.min(bottom, start)));
+      } else if (!anchored || turnFailed) setScroll(bottom);
+    }
+    atEnd = isAtEnd();
   });
 
   async function send(event?: SubmitEvent) {
@@ -184,7 +235,7 @@
     const content = draft.trim();
     if (!content || pending) return;
     creating = true;
-    autoScroll = true;
+    resetFollow();
     error = '';
     const ctx = context ? { type: context.type, id: context.id } : undefined;
     let targetId: number | undefined;
@@ -230,7 +281,7 @@
     if (!thread) return;
     const id = thread.id;
     sendingIds = [...sendingIds, id];
-    autoScroll = true;
+    resetFollow();
     error = '';
     messages = messages.filter((message) => message.role !== 'error');
     let failure: Error | undefined;
@@ -387,10 +438,25 @@
   </SwipeRow>
 {/snippet}
 
-{#snippet agentBadge()}
+<!-- In the conversation header (`live`), the dot also shows the current turn. -->
+{#snippet agentBadge(live: boolean)}
   {#if status}
     <span class="agent-status" data-testid="agent-status">
-      <span class="dot" class:up={status.configured && status.reachable} class:off={!status.configured} aria-hidden="true"></span>
+      <span
+        class="dot"
+        class:up={status.configured && status.reachable}
+        class:off={!status.configured}
+        class:thinking={live && pending && !liveText}
+        class:writing={live && pending && Boolean(liveText)}
+        class:failed={live && turnFailed}
+        aria-hidden="true"
+      >
+        {#if live}
+          <!-- One ripple per tool call; each runs its animation once when it appears. -->
+          {#each liveSteps as step (step.id)}<span class="dot-pulse"></span>{/each}
+          {#if turnFailed}<span class="dot-pulse warn"></span>{/if}
+        {/if}
+      </span>
       {status.configured ? status.model : 'Kein Agent'}
       <span class="visually-hidden">{!status.configured ? '' : status.reachable ? ', erreichbar' : ', nicht erreichbar'}</span>
     </span>
@@ -401,7 +467,7 @@
   <section class="list-pane" aria-labelledby="h-chat">
     <header class="list-head">
       <h1 id="h-chat">Chat</h1>
-      {@render agentBadge()}
+      {@render agentBadge(false)}
       <a class="button primary small" href="/chat?neu" onclick={(e) => open(e, '/chat?neu')}><Icon name="plus" size={16} />Neuer Chat</a>
     </header>
 
@@ -448,7 +514,7 @@
       </a>
       <div class="conv-title">
         <p class="title">{thread?.title ?? 'Neuer Chat'}</p>
-        {@render agentBadge()}
+        {@render agentBadge(true)}
       </div>
       {#if thread}
         <button class="button quiet icon" type="button" onclick={() => openMenu(thread!)} aria-label="Aktionen: {thread.title}">
@@ -457,61 +523,65 @@
       {/if}
     </header>
 
-    <div class="log" bind:this={log} onscroll={onLogScroll}>
-      {#each messages as message (message.id)}
-        {#if message.role === 'user'}
-          <div class="message user" data-testid="message-user"><p>{message.content}</p></div>
-        {:else if message.role === 'assistant'}
-          <div class="message assistant" data-testid="message-assistant">
-            {#if message.toolTrace.length}
-              <details class="tool-trace" data-testid="tool-trace">
-                <summary>
-                  <span class="chevron" aria-hidden="true"></span>
-                  {traceSummary(message.toolTrace)}
-                </summary>
-                <ul class="tool-list">
-                  {#each message.toolTrace as step (step.id)}
-                    <li class="tool-step" class:error={step.status === 'error'} data-testid="tool-step">
-                      <span class="step-dot" aria-hidden="true"></span>
-                      <span>{step.label}</span>
-                    </li>
-                  {/each}
-                </ul>
-              </details>
+    <div class="log-wrap">
+      <div class="log" bind:this={log} onscroll={onLogScroll} data-testid="chat-log">
+        {#each messages as message (message.id)}
+          {#if message.role === 'user'}
+            <div class="message user" data-testid="message-user"><p>{message.content}</p></div>
+          {:else if message.role === 'assistant'}
+            <div class="message assistant" data-testid="message-assistant">
+              {#if message.toolTrace.length}
+                <details class="tool-trace" data-testid="tool-trace">
+                  <summary>
+                    <span class="chevron" aria-hidden="true"></span>
+                    {traceSummary(message.toolTrace)}
+                  </summary>
+                  <ul class="tool-list">
+                    {#each message.toolTrace as step (step.id)}
+                      <li class="tool-step" class:error={step.status === 'error'} data-testid="tool-step">
+                        <span class="step-dot" aria-hidden="true"></span>
+                        <span>{step.label}</span>
+                      </li>
+                    {/each}
+                  </ul>
+                </details>
+              {/if}
+              <!-- Assistant replies go only through the sanitizing renderer (no raw HTML, no images, http(s) links only). -->
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+              {@html renderMarkdown(message.content)}
+            </div>
+          {:else}
+            <div class="notice error message-error" role="alert" data-testid="message-error">
+              <p>{message.content}</p>
+              {#if message === messages.at(-1)}
+                <button class="button" type="button" onclick={retry} disabled={pending}><Icon name="refresh" size={18} />Erneut versuchen</button>
+              {/if}
+            </div>
+          {/if}
+        {/each}
+        {#if pending}
+          <div class="live-turn" data-testid="live-turn" bind:this={liveTurn}>
+            {#if liveSteps.length}
+              <ul class="tool-list live" aria-label="Abfragen des Agenten" data-testid="live-tool-trace">
+                {#each liveSteps as step (step.id)}
+                  <li class="tool-step" class:running={step.status === 'running'} class:error={step.status === 'error'} data-testid="tool-step">
+                    <span class="step-dot" aria-hidden="true"></span>
+                    <span>{step.label}</span>
+                  </li>
+                {/each}
+              </ul>
             {/if}
-            <!-- Assistant replies go only through the sanitizing renderer (no raw HTML, no images, http(s) links only). -->
-            <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-            {@html renderMarkdown(message.content)}
-          </div>
-        {:else}
-          <div class="notice error message-error" role="alert" data-testid="message-error">
-            <p>{message.content}</p>
-            {#if message === messages.at(-1)}
-              <button class="button" type="button" onclick={retry} disabled={pending}><Icon name="refresh" size={18} />Erneut versuchen</button>
+            {#if liveText}
+              <!-- streamMarkdown renders through the sanitizing renderer and appends new words so they can fade in. -->
+              <div class="message assistant streaming" data-testid="message-assistant-streaming" use:streamMarkdown={liveText}></div>
+            {:else}
+              <p class="thinking" role="status">Agent antwortet …</p>
             {/if}
           </div>
         {/if}
-      {/each}
-      {#if pending}
-        <div class="live-turn" data-testid="live-turn">
-          {#if liveSteps.length}
-            <ul class="tool-list live" aria-label="Abfragen des Agenten" data-testid="live-tool-trace">
-              {#each liveSteps as step (step.id)}
-                <li class="tool-step" class:running={step.status === 'running'} class:error={step.status === 'error'} data-testid="tool-step">
-                  <span class="step-dot" aria-hidden="true"></span>
-                  <span>{step.label}</span>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-          {#if liveText}
-            <!-- Assistant replies go only through the sanitizing renderer (no raw HTML, no images, http(s) links only). -->
-            <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-            <div class="message assistant streaming" data-testid="message-assistant-streaming">{@html renderMarkdown(liveText)}</div>
-          {:else}
-            <p class="thinking" role="status">Agent antwortet …</p>
-          {/if}
-        </div>
+      </div>
+      {#if !atEnd}
+        <button class="jump" type="button" onclick={jumpToEnd}><Icon name="down" size={16} />Neuster Text</button>
       {/if}
     </div>
 
@@ -585,21 +655,117 @@
     font-size: var(--step--1);
   }
 
-  /* Filled olive = reachable, ochre ring = down, grey ring = not configured (as on Heute). */
+  /*
+   * Filled olive = reachable, ochre ring = down, grey ring = not configured (as on Heute).
+   * In the conversation header the dot also shows the turn («Atem»): it breathes with a
+   * soft halo while the agent thinks, sends a thin ring outwards per tool call, turns
+   * hollow while the reply streams and fills again when it is done. Filled is an inset
+   * shadow as wide as the radius, so filled and hollow blend into each other.
+   */
   .dot {
+    position: relative;
+    flex: none;
     width: 0.55rem;
     height: 0.55rem;
     border-radius: 50%;
     box-shadow: inset 0 0 0 2px var(--warn);
+    transition: box-shadow 0.45s ease;
   }
 
   .dot.up {
-    background: var(--accent);
-    box-shadow: none;
+    box-shadow: inset 0 0 0 0.3rem var(--accent);
   }
 
   .dot.off {
     box-shadow: inset 0 0 0 2px var(--soft);
+  }
+
+  .dot::before {
+    content: '';
+    position: absolute;
+    inset: -0.32rem;
+    border-radius: 50%;
+    background: var(--accent);
+    opacity: 0;
+    scale: 0.5;
+    pointer-events: none;
+  }
+
+  .dot.thinking {
+    animation: dot-breathe 2.6s ease-in-out infinite;
+  }
+
+  .dot.thinking::before {
+    animation: dot-halo 2.6s ease-in-out infinite;
+  }
+
+  .dot.writing {
+    box-shadow: inset 0 0 0 1.6px var(--accent);
+  }
+
+  .dot.writing::before {
+    animation: dot-halo-out 0.5s ease-out;
+  }
+
+  .dot.failed {
+    box-shadow: inset 0 0 0 2px var(--warn);
+  }
+
+  .dot-pulse {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    opacity: 0;
+    pointer-events: none;
+    box-shadow: 0 0 0 1.5px var(--accent);
+    animation: dot-ripple 0.95s ease-out;
+  }
+
+  .dot-pulse.warn {
+    box-shadow: 0 0 0 1.5px var(--warn);
+    animation-duration: 1.2s;
+  }
+
+  @keyframes dot-breathe {
+    0%,
+    100% {
+      scale: 1;
+    }
+    50% {
+      scale: 1.2;
+    }
+  }
+
+  @keyframes dot-halo {
+    0%,
+    100% {
+      opacity: 0;
+      scale: 0.5;
+    }
+    50% {
+      opacity: 0.24;
+      scale: 1;
+    }
+  }
+
+  @keyframes dot-halo-out {
+    from {
+      opacity: 0.2;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+
+  @keyframes dot-ripple {
+    from {
+      opacity: 0.85;
+      scale: 1;
+    }
+    to {
+      opacity: 0;
+      scale: 3.4;
+    }
   }
 
   .group {
@@ -724,6 +890,14 @@
     white-space: nowrap;
   }
 
+  .log-wrap {
+    position: relative;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
   .log {
     flex: 1;
     display: grid;
@@ -732,6 +906,31 @@
     min-height: 0;
     overflow-y: auto;
     padding: 0.5rem 0.1rem;
+  }
+
+  /* «Neuster Text»: shown while part of the conversation lies below the visible area. */
+  .jump {
+    position: absolute;
+    left: 50%;
+    bottom: 0.6rem;
+    translate: -50% 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-height: 2.5rem;
+    padding: 0.3rem 0.9rem 0.3rem 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--ink);
+    box-shadow: var(--shadow);
+    font-size: var(--step--1);
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .jump :global(svg) {
+    color: var(--accent);
   }
 
   .message {
@@ -760,6 +959,48 @@
 
   .message.assistant.streaming {
     border-left-color: var(--accent);
+  }
+
+  /* Soft streaming («Wortweise»): new words fade in (lib/streamWords.ts) and a thin olive line marks where the agent writes. */
+  .streaming :global(.w.fresh) {
+    animation: word-in 0.55s ease-out both;
+  }
+
+  .streaming > :global(:is(p, pre, blockquote, h1, h2, h3, h4, h5, h6):last-child)::after,
+  .streaming > :global(:is(ul, ol):last-child) > :global(li:last-child)::after {
+    content: '';
+    display: inline-block;
+    width: 2px;
+    height: 1.1em;
+    margin-left: 2px;
+    vertical-align: -0.18em;
+    border-radius: 1px;
+    background: var(--accent);
+  }
+
+  @keyframes word-in {
+    from {
+      opacity: 0;
+    }
+  }
+
+  /* Without motion: the dot stays still but every state reads as a still image; words appear at once. */
+  @media (prefers-reduced-motion: reduce) {
+    .dot,
+    .dot::before,
+    .streaming :global(.w.fresh) {
+      animation: none;
+      transition: none;
+    }
+
+    .dot.thinking::before {
+      opacity: 0.22;
+      scale: 0.85;
+    }
+
+    .dot-pulse {
+      display: none;
+    }
   }
 
   .live-turn {
