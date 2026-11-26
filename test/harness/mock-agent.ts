@@ -103,10 +103,14 @@ export function createMockAgent(options: MockAgentOptions) {
         'error' in mcp
           ? `MCP-Fehler: ${mcp.error}`
           : `Ich habe über MCP ${mcp.openTasks.length} offene Aufgaben gelesen: ${mcp.openTasks.slice(0, 5).join(', ') || 'keine'}.`;
+      // «Lange Antwort» asks for a reply longer than the screen (scroll behaviour test).
+      const filler = last.includes('Lange Antwort')
+        ? Array.from({ length: 40 }, (_, i) => `\n\nAbsatz ${i + 1} der langen Antwort.`).join('')
+        : '';
       const parts = [
         `**Antwort vom Test-Agenten.** ${summary}\n\n`,
         `Deine Nachricht beginnt mit: «${last.slice(0, 60)}»\n\n`,
-        AGENT_PAYLOADS,
+        AGENT_PAYLOADS + filler,
       ];
       const content = parts.join('');
       const id = `chatcmpl-${turns.length}`;
